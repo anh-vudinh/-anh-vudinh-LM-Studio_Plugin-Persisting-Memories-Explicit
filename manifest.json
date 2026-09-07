@@ -1,0 +1,7 @@
+{
+  "type": "plugin",
+  "runner": "node",
+  "owner": "anhuvdinh",
+  "name": "memory-seed",
+  "revision": 1
+}

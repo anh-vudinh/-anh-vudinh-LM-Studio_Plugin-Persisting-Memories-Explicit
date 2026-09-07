@@ -1,0 +1,20 @@
+{
+  "name": "lms-plugin-memory-seed",
+  "version": "1.0.0",
+  "description": "LM Studio plugin creating memory seeds to carry forward into new conversation.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "lms dev",
+    "push": "lms push"
+  },
+  "author": "@anhuvdinh",
+  "license": "MIT",
+  "dependencies": {
+    "@lmstudio/sdk": "^1.5.0",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^7.0.2"
+  }
+}
