@@ -4,11 +4,17 @@ import type {
 } from "@lmstudio/sdk";
 
 import { configSchematics } from "./config";
+
 import { setCurrentConversationHistory } from "./conversationHistoryCache";
+
 import { getMemorySeedsPool } from "./memorySession";
+
 import { readFile } from "node:fs/promises";
+
 import path from "node:path";
+
 import { isEligibleAssistantMessage } from "./conversationReader";
+
 import { memoryStore } from "./memoryStore";
 
 export async function promptPreprocessor(
@@ -69,7 +75,10 @@ export async function promptPreprocessor(
             (memorySeed) =>
                 memorySeed
                     .trim()
-                    .replace(/\.json.*$/i, ".json"),
+                    .replace(
+                        /\.json.*$/i,
+                        ".json",
+                    ),
         );
 
     const validMemorySeedsSelected = [
@@ -102,12 +111,18 @@ export async function promptPreprocessor(
         validMemorySeedsSelected,
     );
 
+    let injectedContext = "";
+
     if (
+        !hasConversationMessage &&
         validMemorySeedsSelected.length > 0
     ) {
         console.log(
-            "[MEMORY TEST] APPENDING MEMORY SEEDS",
+            "[MEMORY TEST] BUILDING MEMORY SEED CONTEXT",
         );
+
+        injectedContext =
+            "THIS IS INJECTED CONTEXT FROM A PRIOR CONVERSATION:\n\n";
 
         for (
             const memorySeed
@@ -129,28 +144,101 @@ export async function promptPreprocessor(
                     "utf-8",
                 );
 
-            console.log(
-                "[MEMORY TEST] appending:",
-                memorySeed,
-            );
-
-            history.append(
-                "user",
+            const seeds = JSON.parse(
                 contents,
-            );
-        }
-    }
+            ) as Array<{
+                date: string;
+                root_input: string;
+                direct_input: string;
+                output: string;
+            }>;
 
-    console.log(
-        "[MEMORY TEST] history AFTER:",
-        history.getMessagesArray().map(
-            (message, index) => ({
-                index,
-                role: message.getRole(),
-                text: message.getText(),
-            }),
-        ),
-    );
+            if (seeds.length === 0) {
+                continue;
+            }
+
+            const dates =
+                seeds
+                    .map(
+                        (seed) =>
+                            seed.date,
+                    )
+                    .filter(Boolean)
+                    .sort();
+
+            const earliestDate =
+                dates[0];
+
+            const latestDate =
+                dates[dates.length - 1];
+
+            injectedContext +=
+                `[BEGIN ${memorySeed}]\n`;
+
+            injectedContext +=
+                `DATE: Between ${earliestDate} - ${latestDate}\n\n`;
+
+            const topics =
+                new Map<
+                    string,
+                    Array<{
+                        date: string;
+                        root_input: string;
+                        direct_input: string;
+                        output: string;
+                    }>
+                >();
+
+            for (const seed of seeds) {
+                const rootInput =
+                    seed.root_input.trim();
+
+                if (!topics.has(rootInput)) {
+                    topics.set(
+                        rootInput,
+                        [],
+                    );
+                }
+
+                topics
+                    .get(rootInput)!
+                    .push(seed);
+            }
+
+            let topicNumber = 1;
+
+            for (
+                const [
+                    rootInput,
+                    topicSeeds,
+                ] of topics
+            ) {
+                injectedContext +=
+                    `TOPIC_${topicNumber}: ${rootInput}\n`;
+
+                for (
+                    const seed
+                    of topicSeeds
+                ) {
+                    injectedContext +=
+                        `USER: ${seed.direct_input}\n`;
+
+                    injectedContext +=
+                        `ASSISTANT: ${seed.output}\n\n`;
+                }
+
+                topicNumber += 1;
+            }
+
+            injectedContext +=
+                `[END ${memorySeed}]\n\n`;
+        }
+
+        console.log(
+            "[MEMORY TEST] formatted context:",
+            injectedContext,
+        );
+    }
 
     const messages =
         history.getMessagesArray();
@@ -163,5 +251,19 @@ export async function promptPreprocessor(
     const numberingInstruction =
         `Format requirement: at the end of only this response add ***message ${assistantIndex}***`;
 
-    return `${userMessage.getText()}\n${numberingInstruction}`;
+    const userText =
+        userMessage.getText();
+
+    if (injectedContext) {
+        return (
+            `${injectedContext}\n` +
+            `${userText}\n` +
+            `${numberingInstruction}`
+        );
+    }
+
+    return (
+        `${userText}\n` +
+        `${numberingInstruction}`
+    );
 }
