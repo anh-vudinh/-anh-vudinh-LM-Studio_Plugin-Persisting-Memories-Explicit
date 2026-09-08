@@ -3,11 +3,83 @@ import { z } from "zod";
 import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
 import { memoryStore } from "./memoryStore";
+import { configSchematics } from "./config";
+import { getMemorySeedsPool } from "./memorySession";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 export async function toolsProvider(
   ctl: ToolsProviderController
 ): Promise<Tool[]> {
   const tools: Tool[] = [];
+
+  /**
+   * ------------------------------------------------------------------------
+   * memory seed selection
+   * ------------------------------------------------------------------------
+   */
+  const config = ctl.getPluginConfig(configSchematics);
+
+  const memorySeedsSelected =
+    config.get("memorySeedsSelected") as string[];
+
+  const memorySeedsPool = getMemorySeedsPool();
+
+  const normalizedMemorySeedsSelected =
+      memorySeedsSelected.map(
+          (memorySeed) =>
+              memorySeed
+                  .trim()
+                  .replace(/\.json.*$/i, ".json"),
+      );
+
+  const validMemorySeedsSelected = [
+      ...new Set(
+          normalizedMemorySeedsSelected.filter(
+              (memorySeed) =>
+                  memorySeedsPool.includes(memorySeed),
+          ),
+      ),
+  ];
+
+  const memoriesDirectory =
+      "C:\\Users\\VU-W11\\.lmstudio\\memories";
+
+  const selectedMemorySeeds = [];
+
+  for (const memorySeed of validMemorySeedsSelected) {
+      const [category, filename] =
+          memorySeed.split("/");
+
+      const filePath = path.join(
+          memoriesDirectory,
+          category,
+          filename,
+      );
+
+      const contents = await readFile(
+          filePath,
+          "utf-8",
+      );
+
+      const seed = JSON.parse(contents);
+
+      selectedMemorySeeds.push({
+          memorySeed,
+          seed,
+      });
+  }
+
+  console.log(
+    "Memory Seeds Selected:",
+    memorySeedsSelected,
+  );
+
+  console.log(
+      "Memory Seeds Validated:",
+      validMemorySeedsSelected,
+  );
+
    /**
    * ------------------------------------------------------------------------
    * remember_message

@@ -9,6 +9,10 @@ import {
     configSchematics,
 } from "./config";
 
+import {
+    initializeMemorySeedsPool,
+} from "./memorySession";
+
 export async function main(context: PluginContext) {
     const memoriesDirectory =
         "C:\\Users\\VU-W11\\.lmstudio\\memories";
@@ -54,6 +58,8 @@ export async function main(context: PluginContext) {
     }
 
     memorySeedsPool.sort();
+
+    initializeMemorySeedsPool(memorySeedsPool);
 
     setConfigSchematics(
         memorySeedsPool,
