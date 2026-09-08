@@ -17,6 +17,8 @@ import { isEligibleAssistantMessage } from "./conversationReader";
 
 import { memoryStore } from "./memoryStore";
 
+let injectedMemorySeeds: string[] | null = null;
+
 export async function promptPreprocessor(
     ctl: PromptPreprocessorController,
     userMessage: ChatMessage,
@@ -92,33 +94,84 @@ export async function promptPreprocessor(
         ),
     ];
 
-    const hasConversationMessage =
-        history
-            .getMessagesArray()
-            .some(
-                (message) =>
-                    message.isUserMessage() ||
-                    message.isAssistantMessage(),
-            );
-
-    console.log(
-        "[MEMORY TEST] hasConversationMessage:",
-        hasConversationMessage,
-    );
-
     console.log(
         "[MEMORY TEST] selected:",
         validMemorySeedsSelected,
     );
 
+    /*
+     * Establish the memory seeds that have already been
+     * injected into this conversation.
+     *
+     * We use the existing chat history as the source of truth
+     * so this still works if the plugin was disabled and later
+     * enabled again.
+     */
+    if (injectedMemorySeeds === null) {
+
+        injectedMemorySeeds = [];
+
+        for (
+            const message
+            of history.getMessagesArray()
+        ) {
+            const text =
+                message.getText();
+
+            const matches =
+                text.matchAll(
+                    /\[BEGIN ([^\]]+)\]/g,
+                );
+
+            for (const match of matches) {
+                const memorySeed =
+                    match[1].trim();
+
+                if (
+                    memorySeedsPool.includes(
+                        memorySeed,
+                    ) &&
+                    !injectedMemorySeeds.includes(
+                        memorySeed,
+                    )
+                ) {
+                    injectedMemorySeeds.push(
+                        memorySeed,
+                    );
+                }
+            }
+        }
+
+        console.log(
+            "[MEMORY TEST] initialized injected seeds:",
+            injectedMemorySeeds,
+        );
+    }
+
+    /*
+     * Find only memory seeds that are currently selected
+     * but have not already been injected.
+     */
+    const newMemorySeeds =
+        validMemorySeedsSelected.filter(
+            (memorySeed) =>
+                !injectedMemorySeeds!.includes(
+                    memorySeed,
+                ),
+        );
+
+    console.log(
+        "[MEMORY TEST] new memory seeds:",
+        newMemorySeeds,
+    );
+
     let injectedContext = "";
 
     if (
-        !hasConversationMessage &&
-        validMemorySeedsSelected.length > 0
+        newMemorySeeds.length > 0
     ) {
         console.log(
-            "[MEMORY TEST] BUILDING MEMORY SEED CONTEXT",
+            "[MEMORY TEST] BUILDING NEW MEMORY SEED CONTEXT",
         );
 
         injectedContext =
@@ -126,7 +179,7 @@ export async function promptPreprocessor(
 
         for (
             const memorySeed
-            of validMemorySeedsSelected
+            of newMemorySeeds
         ) {
             const [category, filename] =
                 memorySeed.split("/");
@@ -232,10 +285,18 @@ export async function promptPreprocessor(
 
             injectedContext +=
                 `[END ${memorySeed}]\n\n`;
+
+            /*
+             * Mark this file as injected only after its
+             * context has successfully been built.
+             */
+            injectedMemorySeeds.push(
+                memorySeed,
+            );
         }
 
         console.log(
-            "[MEMORY TEST] formatted context:",
+            "[MEMORY TEST] formatted new context:",
             injectedContext,
         );
     }
@@ -253,6 +314,23 @@ export async function promptPreprocessor(
 
     const userText =
         userMessage.getText();
+
+        console.log(
+    "[MEMORY TEST] FINAL USER MESSAGE SENT:",
+    userText,
+);
+
+    console.log(
+        "[MEMORY TEST] FINAL PREPROCESSED CONTENT:",
+        injectedContext
+            ? `${injectedContext}\n${userText}\n${numberingInstruction}`
+            : `${userText}\n${numberingInstruction}`,
+    );
+
+    console.log(
+        "[MEMORY TEST] injectedMemorySeeds:",
+        injectedMemorySeeds,
+    );
 
     if (injectedContext) {
         return (
