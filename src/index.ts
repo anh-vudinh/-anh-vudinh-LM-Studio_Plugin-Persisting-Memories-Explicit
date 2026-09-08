@@ -1,8 +1,10 @@
 import { PluginContext } from "@lmstudio/sdk";
 import { toolsProvider } from "./toolsProvider";
 import { promptPreprocessor } from "./promptPreprocessor";
+import { memoryStore } from "./memoryStore";
 import { readdir } from "fs/promises";
 import path from "path";
+import os from "os";
 
 import {
     setConfigSchematics,
@@ -14,8 +16,17 @@ import {
 } from "./memorySession";
 
 export async function main(context: PluginContext) {
+    await memoryStore.setRootDirectory(
+        path.join(
+            os.homedir(),
+            ".lmstudio",
+        ),
+    );
+
+    await memoryStore.initialize();
+
     const memoriesDirectory =
-        "C:\\Users\\VU-W11\\.lmstudio\\memories";
+        await memoryStore.getMemoriesDirectory();
 
     const categories = await readdir(
         memoriesDirectory,
@@ -74,6 +85,16 @@ export async function main(context: PluginContext) {
     context.withPromptPreprocessor(promptPreprocessor);
 
     console.log(
+        "Memory Store Root:",
+        await memoryStore.getRootDirectory(),
+    );
+
+    console.log(
+        "Memory Seeds Directory:",
+        memoriesDirectory,
+    );
+
+    console.log(
         "Memory Seeds Pool:",
         memorySeedsPool,
     );
@@ -81,6 +102,6 @@ export async function main(context: PluginContext) {
     console.log(
         "Memory Seeds Selected: []",
     );
-    
+
     console.log("Memory Seed Plugin initialized");
 }

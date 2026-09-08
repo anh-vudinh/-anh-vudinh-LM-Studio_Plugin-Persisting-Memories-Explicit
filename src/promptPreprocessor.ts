@@ -6,14 +6,10 @@ import type {
 import { configSchematics } from "./config";
 import { setCurrentConversationHistory } from "./conversationHistoryCache";
 import { getMemorySeedsPool } from "./memorySession";
-
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-
 import { isEligibleAssistantMessage } from "./conversationReader";
-
-const memoriesDirectory =
-    "C:\\Users\\VU-W11\\.lmstudio\\memories";
+import { memoryStore } from "./memoryStore";
 
 export async function promptPreprocessor(
     ctl: PromptPreprocessorController,
@@ -22,6 +18,14 @@ export async function promptPreprocessor(
 
     console.log(
         "[MEMORY TEST] promptPreprocessor TRIGGERED",
+    );
+
+    const memoriesDirectory =
+        await memoryStore.getMemoriesDirectory();
+
+    console.log(
+        "[MEMORY TEST] memories directory:",
+        memoriesDirectory,
     );
 
     const config =
@@ -98,12 +102,6 @@ export async function promptPreprocessor(
         validMemorySeedsSelected,
     );
 
-    /*
-     * TEST:
-     *
-     * Only append Memory Seeds when this is
-     * the first conversation turn.
-     */
     if (
         validMemorySeedsSelected.length > 0
     ) {

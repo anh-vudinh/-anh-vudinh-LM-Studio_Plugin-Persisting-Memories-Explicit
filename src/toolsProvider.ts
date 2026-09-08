@@ -42,8 +42,7 @@ export async function toolsProvider(
       ),
   ];
 
-  const memoriesDirectory =
-      "C:\\Users\\VU-W11\\.lmstudio\\memories";
+  const memoriesDirectory = await memoryStore.getMemoriesDirectory();
 
   const selectedMemorySeeds = [];
 
@@ -152,19 +151,6 @@ export async function toolsProvider(
           params.messageNumber
         );
 
-        // const assistant = getAssistantResponse(
-        //     history,
-        //     params.messageNumber,
-        // );
-
-        // const output = cleanAssistantResponse(assistant.content);
-
-        memoryStore.setRootDirectory(
-            ctl.getWorkingDirectory(),
-        );
-
-        await memoryStore.initialize();
-
         await memoryStore.saveSeed(
             params.category,
             params.name,
@@ -181,11 +167,6 @@ export async function toolsProvider(
           return "Memory Seed operation was aborted.";
         }
 
-        /**
-         * Make sure the storage root exists before writing.
-         */
-        memoryStore.setRootDirectory(ctl.getWorkingDirectory());
-        await memoryStore.initialize();
 
         /**
          * Save exactly the association we established:

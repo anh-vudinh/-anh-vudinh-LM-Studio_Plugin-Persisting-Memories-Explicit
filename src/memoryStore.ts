@@ -16,6 +16,7 @@ export interface MemorySeedInfo {
 }
 
 export class MemoryStore {
+    private rootDirectory: string | null = null;
     private memoriesDirectory: string | null = null;
 
     /**
@@ -23,19 +24,17 @@ export class MemoryStore {
      *
      * The directory is supplied by LM Studio's plugin working directory.
      */
-    setRootDirectory(rootDirectory: string): void {
+    async setRootDirectory(rootDirectory: string): Promise<void> {
         if (!rootDirectory || !rootDirectory.trim()) {
             throw new Error(
                 "Memory Store root directory cannot be empty.",
             );
         }
 
-        const lmStudioDirectory = path.dirname(
-            path.dirname(rootDirectory),
-        );
+        this.rootDirectory = rootDirectory;
 
         this.memoriesDirectory = path.join(
-            lmStudioDirectory,
+            this.rootDirectory,
             "memories",
         );
     }
@@ -43,19 +42,38 @@ export class MemoryStore {
     /**
      * Return the root directory used by the memory store.
      */
-    getRootDirectory(): string {
-        return this.getMemoriesDirectory();
+    async getRootDirectory(): Promise<string> {
+        if (!this.rootDirectory) {
+            throw new Error(
+                "Memory Store has not been initialized with a root directory.",
+            );
+        }
+
+        return this.rootDirectory;
     }
 
     /**
      * Make sure the root memories directory exists.
      */
     async initialize(): Promise<void> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
 
         await fs.mkdir(directory, {
             recursive: true,
         });
+    }
+
+    /**
+     * Return the configured memories directory.
+     */
+    async getMemoriesDirectory(): Promise<string> {
+        if (!this.memoriesDirectory) {
+            throw new Error(
+                "Memory Store has not been initialized with a root directory.",
+            );
+        }
+
+        return this.memoriesDirectory;
     }
 
     /**
@@ -68,7 +86,7 @@ export class MemoryStore {
      *   memories/Rust Game/
      */
     async createCategory(category: string): Promise<void> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
         const safeCategory = sanitizePathPart(category);
 
         if (!safeCategory) {
@@ -103,7 +121,7 @@ export class MemoryStore {
      * Delete an entire memory category.
      */
     async deleteCategory(category: string): Promise<void> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
         const safeCategory = sanitizePathPart(category);
 
         if (!safeCategory) {
@@ -148,9 +166,13 @@ export class MemoryStore {
             throw new Error("Memory Seed name cannot be empty.");
         }
 
-        // if (!seed.input.trim()) {
-        //     throw new Error("Memory Seed input cannot be empty.");
-        // }
+        if (!seed.root_input.trim()) {
+            throw new Error("Memory Seed root input cannot be empty.");
+        }
+
+        if (!seed.direct_input.trim()) {
+            throw new Error("Memory Seed direct input cannot be empty.");
+        }
 
         if (!seed.output.trim()) {
             throw new Error("Memory Seed output cannot be empty.");
@@ -212,7 +234,7 @@ export class MemoryStore {
         category: string,
         name: string,
     ): Promise<MemorySeed> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
 
         const safeCategory = sanitizePathPart(category);
         const safeName = sanitizeFilename(name);
@@ -241,7 +263,7 @@ export class MemoryStore {
     async listSeeds(
         category: string,
     ): Promise<MemorySeedInfo[]> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
 
         const safeCategory = sanitizePathPart(category);
 
@@ -331,7 +353,7 @@ export class MemoryStore {
         category: string,
         name: string,
     ): Promise<void> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
 
         const safeCategory = sanitizePathPart(category);
         const safeName = sanitizeFilename(name);
@@ -357,7 +379,7 @@ export class MemoryStore {
     async categoryExists(
         category: string,
     ): Promise<boolean> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
 
         const safeCategory = sanitizePathPart(category);
 
@@ -393,7 +415,7 @@ export class MemoryStore {
         category: string,
         name: string,
     ): Promise<boolean> {
-        const directory = this.getMemoriesDirectory();
+        const directory = await this.getMemoriesDirectory();
 
         const safeCategory = sanitizePathPart(category);
         const safeName = sanitizeFilename(name);
@@ -422,19 +444,6 @@ export class MemoryStore {
 
             throw error;
         }
-    }
-
-    /**
-     * Return the configured memories directory.
-     */
-    private getMemoriesDirectory(): string {
-        if (!this.memoriesDirectory) {
-            throw new Error(
-                "Memory Store has not been initialized with a root directory.",
-            );
-        }
-
-        return this.memoriesDirectory;
     }
 
     /**

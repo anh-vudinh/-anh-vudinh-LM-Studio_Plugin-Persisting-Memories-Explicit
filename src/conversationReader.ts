@@ -234,43 +234,6 @@ export function getPriorUserMessages(
 }
 
 /**
- * Finds the Nth user message in the SDK's conversation history.
- */
-// function findNthUserMessage(
-//     messages: ChatMessage[],
-//     targetNumber: number,
-// ): {
-//     arrayIndex: number;
-//     raw: ChatMessage;
-//     content: string;
-// } | null {
-//     let userMessageNumber = 0;
-
-//     for (let index = 0; index < messages.length; index++) {
-//         const raw = messages[index];
-//         const role = normalizeRole(raw.getRole());
-
-//         if (role !== "user") {
-//             continue;
-//         }
-
-//         userMessageNumber += 1;
-
-//         if (userMessageNumber !== targetNumber) {
-//             continue;
-//         }
-
-//         return {
-//             arrayIndex: index,
-//             raw,
-//             content: extractVisibleText(raw),
-//         };
-//     }
-
-//     return null;
-// }
-
-/**
  * Finds the first assistant message after a given array position.
  *
  * We intentionally do not assume it is immediately adjacent.
