@@ -1,7 +1,7 @@
 import { memoryStore } from "./memoryStore";
 import { join } from "node:path";
 import { ChatMessage } from "@lmstudio/sdk";
-import { readdir, writeFile, readFile } from "node:fs/promises";
+import { readdir, writeFile, readFile, stat } from "node:fs/promises";
 
 export async function removeMemorySeeds(
     conversationFileNumber: number,
@@ -129,7 +129,7 @@ export async function removeMemorySeeds(
  * Locates the file based on # provided by user
  * ------------------------------------------------------------------------
  */
-async function findConversationFile(
+export async function findConversationFile(
     conversationsDirectory: string,
     conversationFileName: number,
 ): Promise<string | null> {
@@ -177,7 +177,7 @@ async function findConversationFile(
  * between history.messagesArray() and the file_number.conversation.json
  * ------------------------------------------------------------------------
  */
-async function validateConversationFile(
+export async function validateConversationFile(
     conversation: any,
     history: ChatMessage[]
 ): Promise<boolean> {
@@ -318,5 +318,71 @@ function escapeRegExp(text: string): string {
     return text.replace(
         /[.*+?^${}()|[\]\\]/g,
         "\\$&",
+    );
+}
+
+/**
+ * ------------------------------------------------------------------------
+ * Finds all conversation files recursively
+ * ------------------------------------------------------------------------
+ */
+export async function findAllConversationFiles(
+    conversationsDirectory: string,
+): Promise<string[]> {
+
+    const conversationFiles: string[] = [];
+
+    async function searchDirectory(
+        directory: string,
+    ): Promise<void> {
+
+        const entries = await readdir(directory, {
+            withFileTypes: true,
+        });
+
+        for (const entry of entries) {
+
+            const fullPath = join(
+                directory,
+                entry.name,
+            );
+
+            if (
+                entry.isFile()
+            ) {
+                // exclude the relationship file
+                if ( entry.name === "ChatSessionConversationRelationship.json") {
+                    continue;
+                }
+
+                conversationFiles.push(fullPath);
+                continue;
+            }
+
+            if (entry.isDirectory()) {
+                await searchDirectory(fullPath);
+            }
+        }
+    }
+    
+    await searchDirectory(conversationsDirectory);
+
+    const filesWithModifiedTime = await Promise.all(
+        conversationFiles.map(async (filePath) => {
+            const fileStats = await stat(filePath);
+
+            return {
+                filePath,
+                modifiedTime: fileStats.mtimeMs,
+            };
+        }),
+    );
+
+    filesWithModifiedTime.sort(
+        (a, b) => b.modifiedTime - a.modifiedTime,
+    );
+
+    return filesWithModifiedTime.map(
+        (file) => file.filePath,
     );
 }

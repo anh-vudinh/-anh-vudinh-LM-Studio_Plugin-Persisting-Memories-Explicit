@@ -3,16 +3,21 @@ import type {
     PromptPreprocessorController,
 } from "@lmstudio/sdk";
 
-import { configSchematics } from "./config";
+import {
+    setConfigSchematics,
+    configSchematics,
+} from "./config";
 import { setCurrentConversationHistory } from "./conversationHistoryCache";
 import { getMemorySeedsPool } from "./memorySession";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { join, basename } from "node:path";
 import { isEligibleAssistantMessage } from "./conversationReader";
 import { memoryStore } from "./memoryStore";
-import { removeMemorySeeds } from "./removeMemorySeeds";
+import { removeMemorySeeds, validateConversationFile, findAllConversationFiles } from "./removeMemorySeeds";
 
 let injectedMemorySeeds: string[] | null = null;
+let internalChatID = "";
 
 export async function promptPreprocessor(
     ctl: PromptPreprocessorController,
@@ -297,9 +302,150 @@ export async function promptPreprocessor(
         );
     }
 
+    /*
+     * Assign a unique ID for this chat session
+     * Check if internalChatID is unknown if so assign one, if exist put it in memory
+     * and build out the ChatSessionConversationRelationship.json
+     */
+    let createdNewInternalChatID = false;
+    if (internalChatID === "") {
+        
+        // Search through history for it's existence
+        for (const message of messages) {
+            if ((message as any).data.role !== "user") {
+                continue;
+            }
+
+            for (const content of (message as any).data.content ?? []) {
+                if (content.type !== "text" || !content.text) {
+                    continue;
+                }
+
+                const match = content.text.match(
+                    /\[InternalChatID:\s*(\d+)\]/
+                );
+
+                if (match) {
+                    internalChatID = match[1];
+                    break;
+                }
+            }
+
+            if (internalChatID !== "") {
+                break;
+            }
+        }
+
+        // We look up into the ChatSessionConversationRelationship.json first to see
+        // if there is already an established relationship
+        // if we find a relationship that matches the internalChatID we grab the conversationFileIdentifier
+        let relationships: any[] = [];
+
+        const rootDirectory = await memoryStore.getRootDirectory();
+
+        // Construct the path to the conversation file
+        const conversationDirectory = join(
+            rootDirectory,
+            "conversations"
+        );
+
+        const relationshipFile = join(
+            conversationDirectory,
+            "ChatSessionConversationRelationship.json",
+        );
+
+        try {
+            const relationshipJson = await readFile(
+                relationshipFile,
+                "utf-8",
+            );
+
+            relationships = JSON.parse(relationshipJson);
+        } catch {
+            // File doesn't exist yet, so we'll create it.
+        }
+
+        const existingRelationship = relationships.find(
+            (relationship) =>
+                relationship.internalChatID === internalChatID,
+        );
+
+        if (existingRelationship) {
+            // Relationship already exists, so we already know the conversation.
+            const conversationFileIdentifier =
+                existingRelationship.conversationFile;
+
+            console.log("========here3",conversationFileIdentifier)
+        }
+
+        // History did not show it so now we give it one
+        if (internalChatID === "") {
+            internalChatID = Date.now().toString();
+            createdNewInternalChatID = true;
+        }
+
+        // If we found the the InternalChatID but did not find an entry in our relationships.json
+        // we have to go find the matching conversation and populate the relationship.json
+        // or if the internalID was not found in either history messages or the relationship.json
+        // Now we grab all the files in conversation folder to try and figure out which
+        // conversation file belongs to this chat
+        if (createdNewInternalChatID || (existingRelationship === undefined && internalChatID !== "")) {
+            const allConversationFiles = await findAllConversationFiles(conversationDirectory);
+            let matchingConversationFile: string | null = null;
+
+            for (const conversationFile of allConversationFiles) {
+
+                const conversationJson = await readFile(
+                    conversationFile,
+                    "utf-8",
+                );
+
+                const conversation = JSON.parse(conversationJson);
+
+                const isValid = await validateConversationFile(
+                    conversation,
+                    messages,
+                );
+
+                if (isValid) {
+                    matchingConversationFile = conversationFile;
+                    break;
+                }
+            }
+
+            // creating the relationship file
+            if (matchingConversationFile !== null) {
+                const conversationFileName = basename(
+                    matchingConversationFile,
+                );
+                const conversationFileIdentifier =
+                    conversationFileName.endsWith(".conversation.json")
+                        ? conversationFileName.replace(
+                            ".conversation.json",
+                            "",
+                        )
+                        : conversationFileName.replace(
+                            ".json",
+                            "",
+                        );
+                const relationshipData = {
+                    internalChatID,
+                    conversationFile: conversationFileIdentifier,
+                };
+
+                relationships.push(relationshipData);
+                await writeFile(
+                    relationshipFile,
+                    JSON.stringify(relationships, null, 2),
+                    "utf-8",
+                );
+            }
+        }
+    }
 
     if (injectedContext) {
         return (
+            `${createdNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
             `${injectedContext}\n` +
             `${userText}\n` +
             `${numberingInstruction}`
@@ -307,6 +453,7 @@ export async function promptPreprocessor(
     }
 
     return (
+        `${createdNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
         `${userText}\n` +
         `${numberingInstruction}`
     );

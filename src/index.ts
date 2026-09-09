@@ -74,6 +74,9 @@ export async function main(context: PluginContext) {
         [],
     );
 
+    // here we read history, figure out which seeds are alraedy injected and set the memoryseedsselected
+    
+
     context.withConfigSchematics(
         configSchematics,
     );
