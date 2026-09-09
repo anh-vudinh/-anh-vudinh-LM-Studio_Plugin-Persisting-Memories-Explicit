@@ -5,15 +5,12 @@ import { memoryStore } from "./memoryStore";
 import { readdir } from "fs/promises";
 import path from "path";
 import os from "os";
+import { initializeMemorySeedsPool } from "./memorySession";
 
 import {
     setConfigSchematics,
     configSchematics,
 } from "./config";
-
-import {
-    initializeMemorySeedsPool,
-} from "./memorySession";
 
 export async function main(context: PluginContext) {
     await memoryStore.setRootDirectory(
@@ -83,25 +80,6 @@ export async function main(context: PluginContext) {
 
     context.withToolsProvider(toolsProvider);
     context.withPromptPreprocessor(promptPreprocessor);
-
-    console.log(
-        "Memory Store Root:",
-        await memoryStore.getRootDirectory(),
-    );
-
-    console.log(
-        "Memory Seeds Directory:",
-        memoriesDirectory,
-    );
-
-    console.log(
-        "Memory Seeds Pool:",
-        memorySeedsPool,
-    );
-
-    console.log(
-        "Memory Seeds Selected: []",
-    );
 
     console.log("Memory Seed Plugin initialized");
 }

@@ -14,6 +14,18 @@ export function createConfig(
             true,
         )
         .field(
+            "conversationFileNumber",
+            "numeric",
+            {
+                displayName: "Conversation File #",
+                int: true,
+                min: 0,
+                subtitle:
+                    "Required for memory removal. Digits only. The number associated with the conversation.json file for this chat session.",
+            },
+            0,
+        )
+        .field(
             "memorySeedsPool",
             "stringArray",
             {

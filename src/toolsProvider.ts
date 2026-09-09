@@ -69,11 +69,6 @@ export async function toolsProvider(
       });
   }
 
-  console.log(
-      "Memory Seeds Validated:",
-      validMemorySeedsSelected,
-  );
-
    /**
    * ------------------------------------------------------------------------
    * remember_message

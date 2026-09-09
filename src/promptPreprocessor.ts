@@ -4,18 +4,13 @@ import type {
 } from "@lmstudio/sdk";
 
 import { configSchematics } from "./config";
-
 import { setCurrentConversationHistory } from "./conversationHistoryCache";
-
 import { getMemorySeedsPool } from "./memorySession";
-
 import { readFile } from "node:fs/promises";
-
 import path from "node:path";
-
 import { isEligibleAssistantMessage } from "./conversationReader";
-
 import { memoryStore } from "./memoryStore";
+import { removeMemorySeeds } from "./removeMemorySeeds";
 
 let injectedMemorySeeds: string[] | null = null;
 
@@ -24,23 +19,17 @@ export async function promptPreprocessor(
     userMessage: ChatMessage,
 ): Promise<string | ChatMessage> {
 
-    console.log(
-        "[MEMORY TEST] promptPreprocessor TRIGGERED",
-    );
-
     const memoriesDirectory =
         await memoryStore.getMemoriesDirectory();
-
-    console.log(
-        "[MEMORY TEST] memories directory:",
-        memoriesDirectory,
-    );
 
     const config =
         ctl.getPluginConfig(configSchematics);
 
     const enableSeeding =
         config.get("enableSeeding") as boolean;
+
+    const conversationFileNumber =
+        config.get("conversationFileNumber") as number;
 
     const memorySeedsSelected =
         config.get("memorySeedsSelected") as string[];
@@ -51,23 +40,9 @@ export async function promptPreprocessor(
     const history =
         await ctl.pullHistory();
 
-    console.log(
-        "[MEMORY TEST] history BEFORE:",
-        history.getMessagesArray().map(
-            (message, index) => ({
-                index,
-                role: message.getRole(),
-                text: message.getText(),
-            }),
-        ),
-    );
-
     await setCurrentConversationHistory(history);
 
     if (!enableSeeding) {
-        console.log(
-            "[MEMORY TEST] seeding disabled",
-        );
 
         return userMessage;
     }
@@ -141,11 +116,6 @@ export async function promptPreprocessor(
                 }
             }
         }
-
-        console.log(
-            "[MEMORY TEST] initialized injected seeds:",
-            injectedMemorySeeds,
-        );
     }
 
     /*
@@ -160,20 +130,11 @@ export async function promptPreprocessor(
                 ),
         );
 
-    console.log(
-        "[MEMORY TEST] new memory seeds:",
-        newMemorySeeds,
-    );
-
     let injectedContext = "";
 
     if (
         newMemorySeeds.length > 0
     ) {
-        console.log(
-            "[MEMORY TEST] BUILDING NEW MEMORY SEED CONTEXT",
-        );
-
         injectedContext =
             "THIS IS INJECTED CONTEXT FROM A PRIOR CONVERSATION:\n\n";
 
@@ -294,11 +255,6 @@ export async function promptPreprocessor(
                 memorySeed,
             );
         }
-
-        console.log(
-            "[MEMORY TEST] formatted new context:",
-            injectedContext,
-        );
     }
 
     const messages =
@@ -315,22 +271,32 @@ export async function promptPreprocessor(
     const userText =
         userMessage.getText();
 
+    /*
+     * Remove memory seeds that are no longer selected.
+     */
+    if (injectedMemorySeeds !== null) {
+
+        const removedMemorySeeds =
+            injectedMemorySeeds.filter(
+                (memorySeed) =>
+                    !validMemorySeedsSelected.includes(
+                        memorySeed,
+                    ),
+            );
+
         console.log(
-    "[MEMORY TEST] FINAL USER MESSAGE SENT:",
-    userText,
-);
+            "[MEMORY TEST] removed memory seeds:",
+            removedMemorySeeds,
+        );
 
-    console.log(
-        "[MEMORY TEST] FINAL PREPROCESSED CONTENT:",
-        injectedContext
-            ? `${injectedContext}\n${userText}\n${numberingInstruction}`
-            : `${userText}\n${numberingInstruction}`,
-    );
+        await removeMemorySeeds(conversationFileNumber, removedMemorySeeds, messages);
 
-    console.log(
-        "[MEMORY TEST] injectedMemorySeeds:",
-        injectedMemorySeeds,
-    );
+        console.log(
+            "[MEMORY TEST] injected seeds after removal:",
+            injectedMemorySeeds,
+        );
+    }
+
 
     if (injectedContext) {
         return (
