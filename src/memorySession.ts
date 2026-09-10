@@ -1,5 +1,4 @@
 let memorySeedsPool: readonly string[] = [];
-let memorySeedsSelected: readonly string[] = [];
 
 export function initializeMemorySeedsPool(
     pool: string[],
@@ -18,10 +17,4 @@ export function removeMemorySeedFromPool(
     memorySeedsPool = memorySeedsPool.filter(
         (seed) => seed !== memorySeed,
     );
-}
-
-export function setMemorySeedsSelected(
-    selected: string[],
-): void {
-    memorySeedsSelected = Object.freeze([...selected]);
 }

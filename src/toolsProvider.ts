@@ -14,12 +14,14 @@ export async function toolsProvider(
 ): Promise<Tool[]> {
   const tools: Tool[] = [];
   const config = ctl.getPluginConfig(configSchematics);
-  
   const memoryFileToDelete = config.get("deleteMemorySeedsFile") as string;
   
-  if (memoryFileToDelete !== "") {
-    await deleteMemorySeedFile(memoryFileToDelete);
-    console.log("deleted", memoryFileToDelete)
+  const normalizedMemoryFileToDelete = memoryFileToDelete.trim()
+
+  if (normalizedMemoryFileToDelete !== "" && getMemorySeedsPool().includes(normalizedMemoryFileToDelete)) {
+
+    await deleteMemorySeedFile(normalizedMemoryFileToDelete);
+    console.log("deleted ", normalizedMemoryFileToDelete)
   }
 
   /**
@@ -163,21 +165,9 @@ export async function toolsProvider(
             },
         );
 
-        //bookmark here
         if (signal.aborted) {
           return "Memory Seed operation was aborted.";
         }
-
-
-        /**
-         * Save exactly the association we established:
-         *
-         * input  = original user intention
-         * output = approved assistant response
-         *
-         * No reasoning/thinking is stored.
-         * No intermediate conversation summary is stored.
-         */
 
         return (
           `Memory Seed "${params.name}" saved under "${params.category}".`
@@ -198,5 +188,4 @@ export async function toolsProvider(
   tools.push(saveMemoryTool);
 
   return tools;
-  
 }

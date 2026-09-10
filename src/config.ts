@@ -18,15 +18,15 @@ export function createConfig(
             conversationFileName,
         )
         .field(
-            "memorySeedsSelected",
-            "stringArray",
+            "deleteMemorySeedsFile",
+            "string",
             {
-                displayName: "Selected Memories",
-                subtitle: "Injects a memory into context.",
-                allowEmptyStrings: false,
-                warning: "Removing a memory purges it from context after the next turn.",
+                displayName: "Delete Memory",
+                subtitle: " This does not remove already injected memories. This removes it from the available memories pool.",
+                warning: "The selected memories will be permenantly deleted.",
+                placeholder: "Full name the memory to delete from the pool.",
             },
-            memorySeedsSelected,
+            "",
         )
         .field(
             "memorySeedsPool",
@@ -39,15 +39,15 @@ export function createConfig(
             memorySeedsPool,
         )
         .field(
-            "deleteMemorySeedsFile",
-            "string",
+            "memorySeedsSelected",
+            "stringArray",
             {
-                displayName: "Delete Memory",
-                subtitle: " This does not remove memories already injected. This removes it from the available pool.",
-                warning: "The selected memories will be permenantly deleted.",
-                placeholder: "Full name of memory here to delete it from the pool",
+                displayName: "Selected Memories",
+                subtitle: "Injects a memory into context.",
+                allowEmptyStrings: false,
+                warning: "Removing a memory purges it from context after the next turn.",
             },
-            "",
+            memorySeedsSelected,
         )
         .build();
 }
