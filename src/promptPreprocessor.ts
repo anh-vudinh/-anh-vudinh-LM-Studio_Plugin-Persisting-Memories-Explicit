@@ -8,7 +8,7 @@ import {
     configSchematics,
 } from "./config";
 import { setCurrentConversationHistory } from "./conversationHistoryCache";
-import { getMemorySeedsPool } from "./memorySession";
+import { getMemorySeedsPool, setMemorySeedsSelected } from "./memorySession";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { join, basename } from "node:path";
@@ -111,6 +111,12 @@ export async function promptPreprocessor(
                 }
             }
         }
+        // update selected seeds here
+        // probably leave as a fallback. The logic of removing and adding seeds is already catching
+        // any situation where user purposely tries to curcumvent the system
+        // if it's not in selected memory it gets wiped the next chat turn. If it's in selected memory
+        // it'll get add if it's not in context or it will just allow it to continue existing
+        setMemorySeedsSelected(injectedMemorySeeds)
     }
 
     // Find selected memory seeds that have not already been injected.

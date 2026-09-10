@@ -6,20 +6,27 @@ import { memoryStore } from "./memoryStore";
 import { configSchematics } from "./config";
 import { getMemorySeedsPool } from "./memorySession";
 import { readFile } from "node:fs/promises";
+import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
 import path from "node:path";
 
 export async function toolsProvider(
   ctl: ToolsProviderController
 ): Promise<Tool[]> {
   const tools: Tool[] = [];
+  const config = ctl.getPluginConfig(configSchematics);
+  
+  const memoryFileToDelete = config.get("deleteMemorySeedsFile") as string;
+  
+  if (memoryFileToDelete !== "") {
+    await deleteMemorySeedFile(memoryFileToDelete);
+    console.log("deleted", memoryFileToDelete)
+  }
 
   /**
    * ------------------------------------------------------------------------
    * memory seed selection
    * ------------------------------------------------------------------------
    */
-  const config = ctl.getPluginConfig(configSchematics);
-
   const memorySeedsSelected =
     config.get("memorySeedsSelected") as string[];
 
