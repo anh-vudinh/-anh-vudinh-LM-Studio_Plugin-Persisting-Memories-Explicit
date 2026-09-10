@@ -3,27 +3,19 @@ import { createConfigSchematics } from "@lmstudio/sdk";
 export function createConfig(
     memorySeedsPool: string[],
     memorySeedsSelected: string[],
+    conversationFileName: string,
 ) {
     return createConfigSchematics()
         .field(
-            "enableSeeding",
-            "boolean",
+            "conversationFileName",
+            "string",
             {
-                displayName: "Enable Seeding?",
-            },
-            true,
-        )
-        .field(
-            "conversationFileNumber",
-            "numeric",
-            {
-                displayName: "Conversation File #",
-                int: true,
-                min: 0,
+                displayName: "Conversation File Name",
                 subtitle:
                     "Required for memory removal. Digits only. The number associated with the conversation.json file for this chat session.",
+                nonConfigurable: true,
             },
-            0,
+            conversationFileName,
         )
         .field(
             "memorySeedsPool",
@@ -48,14 +40,16 @@ export function createConfig(
         .build();
 }
 
-export let configSchematics = createConfig([], []);
+export let configSchematics = createConfig([], [], "");
 
 export function setConfigSchematics(
     memorySeedsPool: string[],
     memorySeedsSelected: string[],
+    conversationFileName: string,
 ): void {
     configSchematics = createConfig(
         memorySeedsPool,
         memorySeedsSelected,
+        conversationFileName,
     );
 }

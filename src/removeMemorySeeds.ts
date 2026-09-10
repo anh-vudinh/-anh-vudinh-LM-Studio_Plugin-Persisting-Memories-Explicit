@@ -1,20 +1,31 @@
 import { memoryStore } from "./memoryStore";
 import { join } from "node:path";
-import { ChatMessage } from "@lmstudio/sdk";
 import { readdir, writeFile, readFile, stat } from "node:fs/promises";
 
+import {
+    ChatMessage,
+    InferParsedConfig,
+} from "@lmstudio/sdk";
+
+import {
+    setConfigSchematics,
+    configSchematics,
+} from "./config";
+
 export async function removeMemorySeeds(
-    conversationFileNumber: number,
+    conversationFileName: string,
     seedsToModify: string[],
     history: ChatMessage[],
+    ctlConfig: InferParsedConfig<typeof configSchematics>,
 ): Promise<string> {
 
     const rootDirectory = await memoryStore.getRootDirectory();
 
     try{
-        // Reject 0 or invalid conversation numbers
-        if(conversationFileNumber === 0 || conversationFileNumber <= 999999999999){
-            return `Error: The conversation file number is either 0 or not valid.`
+
+        // Reject invalid conversation name
+        if(conversationFileName === ""){
+            return `Error: The conversation file number is not valid.`
         }
 
         // Construct the path to the conversation file
@@ -25,12 +36,12 @@ export async function removeMemorySeeds(
 
         const conversationFile = await findConversationFile(
             conversationDirectory,
-            conversationFileNumber
+            conversationFileName
         );
         
         // File existence validation
         if(!conversationFile) {
-            return `Conversation file ${conversationFileNumber}.conversation.json not found.`;
+            return `Conversation file not found in directory.`;
         }
 
         // Prepare json file to be readable and assign to variable
@@ -42,6 +53,8 @@ export async function removeMemorySeeds(
         const conversation = JSON.parse(conversationJson);
         
         // File content fuzzy matches history validation
+        // Is this second validation check necessary? we already validated it before
+        // in promptpreprocessor, double check it's not redundant
         if (!await validateConversationFile(conversation, history)){
             return `Error: The conversation file is not associated with this chat session.`
         }
@@ -112,11 +125,22 @@ export async function removeMemorySeeds(
                     "utf-8",
                 );
 
+                // Seed removed success
+                console.log(`[removeMemorySeeds] Memory seeds [${seedsToModify.join(", ")}] successfully removed.`)
+                
+                // update the .config memoryselected
+                const currentMemorySeedsSelected = ctlConfig.get("memorySeedsSelected") as string[];
+                const updatedMemorySeedsSelected =
+                    currentMemorySeedsSelected.filter(
+                        (memorySeed) => !seedsToModify.includes(memorySeed),
+                    );
+                setConfigSchematics( [], updatedMemorySeedsSelected, conversationFileName);
+
                 clearInterval(pollForAssistantUpdate);
             }
         }, 2000);
 
-        return `Conversation file successfully modified.`;
+        return `Initiated removal of memory seeds ${seedsToModify.join(", ")}.`;
 
     } catch (error) {
 
@@ -131,9 +155,14 @@ export async function removeMemorySeeds(
  */
 export async function findConversationFile(
     conversationsDirectory: string,
-    conversationFileName: number,
+    conversationFileName: string,
 ): Promise<string | null> {
-    const targetFileName = `${conversationFileName}.conversation.json`;
+    // Fuzzy check if provided name is a unix date/time
+    // If it's unix date/time, lm studio default auto assign name
+    // append .conversation at the end
+    const targetFileName = /^\d{13,14}$/.test(conversationFileName)
+    ? `${conversationFileName}.conversation.json`
+    : `${conversationFileName}.json`;
 
     async function searchDirectory(
         directory: string,

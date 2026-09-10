@@ -71,17 +71,16 @@ export async function toolsProvider(
 
    /**
    * ------------------------------------------------------------------------
-   * remember_message
+   * saveMemoryTool
    * ------------------------------------------------------------------------
    */
-  const rememberMessageTool = tool({
-    name: "remember_message",
+  const saveMemoryTool = tool({
+    name: "save_memory",
 
     description:
-      "Tool for when user specifically calls, create memory message <N>. " +
-      "messageNumber is set to <N>. " +
-      "User must provide a category and name, ask the user for them before invoking the tool. " +
-      "Regardless of success or failure, only invoke the tool once per user request. ",
+      "Use when user says, save memory message <N>, messageNumber is set to <N>." +
+      "If user does not provide category and name, ask them for it." +
+      "You must first know the category and name before calling this tool.",
 
     parameters: {
       messageNumber: z
@@ -89,7 +88,7 @@ export async function toolsProvider(
         .int()
         .min(0)
         .describe(
-          "Exact number provided by the user as assistant message <N>."
+          "Exact number provided by the user as message <N>."
         ),
 
       category: z
@@ -97,7 +96,7 @@ export async function toolsProvider(
         .trim()
         .min(1)
         .describe(
-          "User provided only. Not up to your discretion. Memory Seed category/folder."
+          "NON OPTIONAL: MUST BE USER PROVIDED. Memory Seed category/folder."
         ),
 
       name: z
@@ -105,7 +104,7 @@ export async function toolsProvider(
         .trim()
         .min(1)
         .describe(
-          "User provided only. Not up to your discretion. Name for the Memory Seed."
+          "NON OPTIONAL: MUST BE USER PROVIDED. Name for the Memory Seed."
         ),
     },
 
@@ -189,7 +188,7 @@ export async function toolsProvider(
     },
   });
 
-  tools.push(rememberMessageTool);
+  tools.push(saveMemoryTool);
 
   return tools;
   

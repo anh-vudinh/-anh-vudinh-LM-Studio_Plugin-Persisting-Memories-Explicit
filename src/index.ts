@@ -69,10 +69,8 @@ export async function main(context: PluginContext) {
 
     initializeMemorySeedsPool(memorySeedsPool);
 
-    setConfigSchematics(
-        memorySeedsPool,
-        [],
-    );
+    // first population of the config values
+    setConfigSchematics( memorySeedsPool, [], "");
 
     // here we read history, figure out which seeds are alraedy injected and set the memoryseedsselected
     
