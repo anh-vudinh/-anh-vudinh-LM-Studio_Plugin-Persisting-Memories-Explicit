@@ -77,6 +77,16 @@ export async function promptPreprocessor(
                 ),
         );
 
+      console.log(
+        "[MEMORY TEST] history BEFORE:",
+        history.getMessagesArray().map(
+            (message, index) => ({
+                index,
+                role: message.getRole(),
+                text: message.getText(),
+            }),
+        ),
+    );
     // We have new valid seeds waiting to be injected
     let injectedContext = "";
 

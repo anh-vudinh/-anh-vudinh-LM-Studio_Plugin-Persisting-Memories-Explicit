@@ -45,7 +45,7 @@ export function createConfig(
                 displayName: "Selected Memories",
                 subtitle: "Injects a memory into context.",
                 allowEmptyStrings: false,
-                warning: "Removing a memory purges it from context after the next turn.",
+                warning: "Only the memories listed below will persist through turns.",
             },
             memorySeedsSelected,
         )
