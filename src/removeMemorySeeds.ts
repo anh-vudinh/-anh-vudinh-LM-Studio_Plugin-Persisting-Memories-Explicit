@@ -1,6 +1,8 @@
 import { memoryStore } from "./memoryStore";
 import { join } from "node:path";
 import { readdir, writeFile, readFile, stat } from "node:fs/promises";
+import { removeMemorySeedFromSelected, getMemorySeedsSelected, } from "./memorySession";
+import { getCurrentConversationHistory } from "./conversationHistoryCache";
 
 import {
     ChatMessage,
@@ -13,14 +15,14 @@ import {
 } from "./config";
 
 export async function removeMemorySeeds(
-    conversationFileName: string,
-    seedsToModify: string[],
-    history: ChatMessage[],
     ctlConfig: InferParsedConfig<typeof configSchematics>,
+    seedsToModify: string[],
 ): Promise<string> {
 
     const rootDirectory = await memoryStore.getRootDirectory();
-
+    const messages = (await getCurrentConversationHistory()).getMessagesArray();
+    const conversationFileName = ctlConfig.get("conversationFileName") as string;
+    
     try{
 
         // Reject invalid conversation name
@@ -53,9 +55,9 @@ export async function removeMemorySeeds(
         const conversation = JSON.parse(conversationJson);
         
         // File content fuzzy matches history validation
-        // Is this second validation check necessary? we already validated it before
-        // in promptpreprocessor, double check it's not redundant
-        if (!await validateConversationFile(conversation, history)){
+        // Is this second validation check necessary? we already validated it before in promptpreprocessor
+        // I think this check was redundancy for if I wanted to use this function outside of promptpreprocessor
+        if (!await validateConversationFile(conversation, messages)){
             return `Error: The conversation file is not associated with this chat session.`
         }
 
@@ -114,6 +116,8 @@ export async function removeMemorySeeds(
                                 if (updatedText !== content.text) {
                                     content.text = updatedText;
                                 }
+
+                                removeMemorySeedFromSelected(seedName);
                             }
                         }
                     }
@@ -129,12 +133,7 @@ export async function removeMemorySeeds(
                 console.log(`[removeMemorySeeds] Memory seeds [${seedsToModify.join(", ")}] successfully removed.`)
                 
                 // update the .config memoryselected
-                const currentMemorySeedsSelected = ctlConfig.get("memorySeedsSelected") as string[];
-                const updatedMemorySeedsSelected =
-                    currentMemorySeedsSelected.filter(
-                        (memorySeed) => !seedsToModify.includes(memorySeed),
-                    );
-                setConfigSchematics( [], updatedMemorySeedsSelected, conversationFileName);
+                setConfigSchematics({memorySeedsSelected: getMemorySeedsSelected()});
 
                 clearInterval(pollForAssistantUpdate);
             }

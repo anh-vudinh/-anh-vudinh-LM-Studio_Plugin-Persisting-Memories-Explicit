@@ -1,12 +1,12 @@
-import { configSchematics } from "./config";
+import { configSchematics, setConfigSchematics } from "./config";
 import { setCurrentConversationHistory, getCurrentConversationHistory } from "./conversationHistoryCache";
-import { getMemorySeedsPool } from "./memorySession";
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { join, basename } from "node:path";
+import { getMemorySeedsPool, updateMemorySeedsSelected, addMemorySeedToSelected, getMemorySeedsSelected } from "./memorySession";
 import { isEligibleAssistantMessage } from "./conversationReader";
 import { memoryStore } from "./memoryStore";
 import { removeMemorySeeds, validateConversationFile, findAllConversationFiles } from "./removeMemorySeeds";
+import { readFile, writeFile, access } from "node:fs/promises";
+import { join, basename } from "node:path";
+import path from "node:path";
 
 import type {
     ChatMessage,
@@ -15,13 +15,12 @@ import type {
 
 let injectedMemorySeeds: string[] | null = null;
 let internalChatID = "";
-let memoryCleanupIndex = 0;
+const relationshipsLimit = 15;
 
 export async function promptPreprocessor(
     ctl: PromptPreprocessorController,
     userMessage: ChatMessage,
 ): Promise<string | ChatMessage> {
-
     const memoriesDirectory = await memoryStore.getMemoriesDirectory();
     const config = ctl.getPluginConfig(configSchematics);
     const memorySeedsSelected = config.get("memorySeedsSelected") as string[];
@@ -65,7 +64,7 @@ export async function promptPreprocessor(
 
         injectedMemorySeeds = [];
 
-        injectedMemorySeeds = await promptProcessorHistoryScanForPreviousSeeds(memorySeedsPool, messages);
+        injectedMemorySeeds = await promptProcessorHistoryScanForPreviousSeeds();
     }
 
     // Find selected memory seeds that have not already been injected.
@@ -77,20 +76,21 @@ export async function promptPreprocessor(
                 ),
         );
 
-      console.log(
-        "[MEMORY TEST] history BEFORE:",
-        history.getMessagesArray().map(
-            (message, index) => ({
-                index,
-                role: message.getRole(),
-                text: message.getText(),
-            }),
-        ),
-    );
-    // We have new valid seeds waiting to be injected
+    // console.log(
+    //     "[MEMORY TEST] history:",
+    //     history.getMessagesArray().map(
+    //         (message, index) => ({
+    //             index,
+    //             role: message.getRole(),
+    //             text: message.getText(),
+    //         }),
+    //     ),
+    // );
+
+    // New valid seeds waiting to be injected
     let injectedContext = "";
 
-    if ( newMemorySeeds.length > 0 ) {
+    if (newMemorySeeds.length > 0) {
 
         injectedContext = await promptProcessorConstructMemoriesToInject(newMemorySeeds, memoriesDirectory);
     }
@@ -106,7 +106,7 @@ export async function promptPreprocessor(
     if (internalChatID === "") {
 
         // Search through history for it's existence
-        internalChatID = await promptProcessorScanHistoryForID(messages)
+        internalChatID = await promptProcessorScanHistoryForID();
         
         // History did not show it so now we give it one
         // promptProcessorScanForConversationFile will use to connect them together
@@ -120,13 +120,13 @@ export async function promptPreprocessor(
     // or scan each conversation.json until we find the matching one
     if(conversationFileName === "") {
 
-        conversationFileName = await promptProcessorScanForConversationFile(createdNewInternalChatID, messages);
+        conversationFileName = await promptProcessorScanForConversationFile(createdNewInternalChatID);
     }
 
     // Remove memory seeds the user no longer wants
     if (injectedMemorySeeds !== null) {
 
-        injectedMemorySeeds = await promptProcessorRemoveSeeds(ctl, injectedMemorySeeds, validMemorySeedsSelected, conversationFileName, messages);
+        injectedMemorySeeds = await promptProcessorRemoveSeeds(ctl, injectedMemorySeeds, validMemorySeedsSelected);
     }
 
     if (injectedContext) {
@@ -146,12 +146,11 @@ export async function promptPreprocessor(
     );
 }
 
-async function promptProcessorHistoryScanForPreviousSeeds(
-    memorySeedsPool: readonly string[],
-    messages: ChatMessage[],
-): Promise<string[]> {
+async function promptProcessorHistoryScanForPreviousSeeds(): Promise<string[]> {
 
     let foundPastInjectedMemorySeed: string[] = [];
+    const memorySeedsPool = getMemorySeedsPool();
+    const messages = (await getCurrentConversationHistory()).getMessagesArray();
 
     for (
         const message
@@ -185,7 +184,11 @@ async function promptProcessorHistoryScanForPreviousSeeds(
             }
         }
     }
-    
+
+    updateMemorySeedsSelected(foundPastInjectedMemorySeed);
+
+    setConfigSchematics({memorySeedsSelected: foundPastInjectedMemorySeed});
+
     return foundPastInjectedMemorySeed;
 }
 
@@ -324,16 +327,19 @@ async function promptProcessorConstructMemoriesToInject(
                 memorySeed,
             );
         }
+
+        addMemorySeedToSelected(memorySeed);
     }
-    
+
+    setConfigSchematics({memorySeedsSelected: getMemorySeedsSelected()});
+
     return createdInjectedContext;
 }
 
-async function promptProcessorScanHistoryForID(
-    messages: ChatMessage[],
-): Promise<string> {
+async function promptProcessorScanHistoryForID(): Promise<string> {
 
     let searchedInternalChatID = "";
+    const messages = (await getCurrentConversationHistory()).getMessagesArray();
 
     for (const message of messages) {
         if ((message as any).data.role !== "user") {
@@ -365,12 +371,12 @@ async function promptProcessorScanHistoryForID(
 
 async function promptProcessorScanForConversationFile(
     createdNewInternalChatID: boolean,
-    messages: ChatMessage[],
 ): Promise<string> {
     let relationships: any[] = [];
     let foundConversationFileName = "";
 
     const rootDirectory = await memoryStore.getRootDirectory();
+    const messages = (await getCurrentConversationHistory()).getMessagesArray();
 
     // Construct the path to the conversation file
     const conversationDirectory = join(
@@ -404,7 +410,32 @@ async function promptProcessorScanForConversationFile(
         // Relationship already exists, so we already know the conversation.
         const conversationFileIdentifier = existingRelationship.conversationFile;
 
-        foundConversationFileName = conversationFileIdentifier;
+        const conversationFilePath = join(
+            conversationDirectory,
+            `${conversationFileIdentifier}.conversation.json`,
+        );
+
+        // Check whether the conversationFile actually still exist
+        // If it no longer is present delete the entry from the relationship json file
+        // and then continue the logic to scan for the correct file
+        try {
+            await access(conversationFilePath);
+
+            // File exists, so we're done.
+            foundConversationFileName = conversationFileIdentifier;
+        } catch {
+            // Conversation file no longer exists.
+            relationships = relationships.filter(
+                (relationship) =>
+                    relationship.internalChatID !== internalChatID,
+            );
+
+            await writeFile(
+                relationshipFile,
+                JSON.stringify(relationships, null, 2),
+                "utf-8",
+            );
+        }
     }
 
     // If we found the the InternalChatID but did not find an entry in our relationships.json
@@ -412,7 +443,7 @@ async function promptProcessorScanForConversationFile(
     // or if the internalID was not found in either history messages or the relationship.json
     // Now we grab all the files in conversation folder to try and figure out which
     // conversation file belongs to this chat
-    if (createdNewInternalChatID || (existingRelationship === undefined && internalChatID !== "")) {
+    if (createdNewInternalChatID || (existingRelationship === undefined && internalChatID !== "") || foundConversationFileName === "") {
 
         const allConversationFiles = await findAllConversationFiles(conversationDirectory);
         let matchingConversationFile: string | null = null;
@@ -466,8 +497,8 @@ async function promptProcessorScanForConversationFile(
 
             // Control the file size
             // Keep only the newest 20 relationships
-            if (relationships.length > 20) {
-                relationships = relationships.slice(-20);
+            if (relationships.length > relationshipsLimit) {
+                relationships = relationships.slice(-relationshipsLimit);
             }
 
             await writeFile(
@@ -480,6 +511,8 @@ async function promptProcessorScanForConversationFile(
         }
     }
 
+    setConfigSchematics({conversationFileName: foundConversationFileName});
+
     return foundConversationFileName;
 }
 
@@ -487,8 +520,6 @@ async function promptProcessorRemoveSeeds(
     ctl: PromptPreprocessorController,
     injectedMemorySeeds: string[],
     validMemorySeedsSelected: string[],
-    conversationFileName: string,
-    messages: ChatMessage[],
 ): Promise<string[]> {
 
     const config = ctl.getPluginConfig(configSchematics);
@@ -507,19 +538,17 @@ async function promptProcessorRemoveSeeds(
     // Second chceck to make sure there's actually something to remove
     if(removedMemorySeeds.length > 0) {
 
-        await removeMemorySeeds(conversationFileName, removedMemorySeeds, messages, config);
+        await removeMemorySeeds(config, removedMemorySeeds);
 
         // need to set injectedMemorySeeds to match what's actually
         // available rather than use processing power to do another scan of history
         // the actual update of the .config is delayed to work around lmstudio's lack of support
         // so injectedMemorySeeds will just update on it's own and assume the
         // .config will match later when assistant is done responding
-        const currentMemorySeedsSelected = config.get("memorySeedsSelected") as string[];
-        const updatedMemorySeedsSelected =
-                currentMemorySeedsSelected.filter(
-                    (memorySeed) => !removedMemorySeeds.includes(memorySeed),
-                );
-        injectedMemorySeeds = updatedMemorySeedsSelected;
+        const updatedMemorySeedsSelected = getMemorySeedsSelected();
+
+        injectedMemorySeeds = [...updatedMemorySeedsSelected];
+        setConfigSchematics({memorySeedsSelected: updatedMemorySeedsSelected});
     }
 
     return injectedMemorySeeds;

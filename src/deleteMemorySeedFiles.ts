@@ -1,7 +1,8 @@
 import { memoryStore } from "./memoryStore";
 import { join } from "node:path";
 import { readdir, unlink, rmdir } from "node:fs/promises";
-import { removeMemorySeedFromPool } from "./memorySession";
+import { removeMemorySeedFromPool, getMemorySeedsPool } from "./memorySession";
+import { setConfigSchematics } from "./config"
 
 export async function deleteMemorySeedFile(
     memorySeed: string,
@@ -27,6 +28,8 @@ export async function deleteMemorySeedFile(
         try {
             await unlink(memoryFile);
             removeMemorySeedFromPool(normalizedMemorySeed);
+            setConfigSchematics({memorySeedsPool: getMemorySeedsPool()});
+            
         } catch (error: any) {
             if (error.code === "ENOENT") {
                 return `Error: Memory seed "${normalizedMemorySeed}" was not found.`;

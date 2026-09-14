@@ -95,7 +95,7 @@ export async function toolsProvider(
       messageNumber: z
         .number()
         .int()
-        .min(0)
+        .min(1)
         .describe(
           "Exact number provided by the user as message <N>."
         ),

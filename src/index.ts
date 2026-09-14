@@ -3,9 +3,9 @@ import { toolsProvider } from "./toolsProvider";
 import { promptPreprocessor } from "./promptPreprocessor";
 import { memoryStore } from "./memoryStore";
 import { readdir } from "fs/promises";
+import { initializeMemorySeedsPool } from "./memorySession";
 import path from "path";
 import os from "os";
-import { initializeMemorySeedsPool } from "./memorySession";
 
 import {
     setConfigSchematics,
@@ -13,6 +13,8 @@ import {
 } from "./config";
 
 export async function main(context: PluginContext) {
+
+    // checking memories directory to populate initial memory seed pool
     await memoryStore.setRootDirectory(
         path.join(
             os.homedir(),
@@ -70,7 +72,7 @@ export async function main(context: PluginContext) {
     initializeMemorySeedsPool(memorySeedsPool);
 
     // first population of the config values
-    setConfigSchematics( memorySeedsPool, [], "");
+    setConfigSchematics({memorySeedsPool: memorySeedsPool});
 
     context.withConfigSchematics(configSchematics);
     context.withToolsProvider(toolsProvider);

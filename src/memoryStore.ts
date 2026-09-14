@@ -1,3 +1,5 @@
+import { setConfigSchematics } from "./config";
+import { getMemorySeedsPool } from "./memorySession";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -225,6 +227,21 @@ export class MemoryStore {
             JSON.stringify(seeds, null, 2),
             "utf-8",
         );
+
+        const memorySeedName =
+            `${safeCategory}/${safeName}.json`;
+
+        const memorySeedsPool =
+            getMemorySeedsPool();
+
+        if (!memorySeedsPool.includes(memorySeedName)) {
+            setConfigSchematics({
+                memorySeedsPool: [
+                    ...memorySeedsPool,
+                    memorySeedName,
+                ],
+            });
+        }
     }
 
     /**
@@ -349,29 +366,29 @@ export class MemoryStore {
     /**
      * Delete one Memory Seed.
      */
-    async deleteSeed(
-        category: string,
-        name: string,
-    ): Promise<void> {
-        const directory = await this.getMemoriesDirectory();
+    // async deleteSeed(
+    //     category: string,
+    //     name: string,
+    // ): Promise<void> {
+    //     const directory = await this.getMemoriesDirectory();
 
-        const safeCategory = sanitizePathPart(category);
-        const safeName = sanitizeFilename(name);
+    //     const safeCategory = sanitizePathPart(category);
+    //     const safeName = sanitizeFilename(name);
 
-        if (!safeCategory || !safeName) {
-            throw new Error("Invalid Memory Seed path.");
-        }
+    //     if (!safeCategory || !safeName) {
+    //         throw new Error("Invalid Memory Seed path.");
+    //     }
 
-        const filePath = path.join(
-            directory,
-            safeCategory,
-            `${safeName}.json`,
-        );
+    //     const filePath = path.join(
+    //         directory,
+    //         safeCategory,
+    //         `${safeName}.json`,
+    //     );
 
-        await fs.rm(filePath, {
-            force: true,
-        });
-    }
+    //     await fs.rm(filePath, {
+    //         force: true,
+    //     });
+    // }
 
     /**
      * Check whether a category exists.

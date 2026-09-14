@@ -1,8 +1,12 @@
 import { createConfigSchematics } from "@lmstudio/sdk";
 
+let currentMemorySeedsPool: readonly string[] = [];
+let currentMemorySeedsSelected: readonly string[] = [];
+let currentConversationFileName = "";
+
 export function createConfig(
-    memorySeedsPool: string[],
-    memorySeedsSelected: string[],
+    memorySeedsPool: readonly string[],
+    memorySeedsSelected: readonly string[],
     conversationFileName: string,
 ) {
     return createConfigSchematics()
@@ -36,7 +40,7 @@ export function createConfig(
                 subtitle:
                     "DISPLAY ONLY: Copy names from this list to the Selected Memories text field to use in the current session.",
             },
-            memorySeedsPool,
+            [...memorySeedsPool],
         )
         .field(
             "memorySeedsSelected",
@@ -47,21 +51,41 @@ export function createConfig(
                 allowEmptyStrings: false,
                 warning: "Only the memories listed below will persist through turns.",
             },
-            memorySeedsSelected,
+            [...memorySeedsSelected]
         )
         .build();
 }
 
-export let configSchematics = createConfig([], [], "");
+export let configSchematics = createConfig(
+    currentMemorySeedsPool,
+    currentMemorySeedsSelected,
+    currentConversationFileName,
+);
 
-export function setConfigSchematics(
-    memorySeedsPool: string[],
-    memorySeedsSelected: string[],
-    conversationFileName: string,
-): void {
+export function setConfigSchematics({
+    memorySeedsPool,
+    memorySeedsSelected,
+    conversationFileName,
+}: {
+    memorySeedsPool?: readonly string[];
+    memorySeedsSelected?: readonly string[];
+    conversationFileName?: string;
+}): void {
+    if (memorySeedsPool !== undefined) {
+        currentMemorySeedsPool = memorySeedsPool;
+    }
+
+    if (memorySeedsSelected !== undefined) {
+        currentMemorySeedsSelected = memorySeedsSelected;
+    }
+
+    if (conversationFileName !== undefined) {
+        currentConversationFileName = conversationFileName;
+    }
+
     configSchematics = createConfig(
-        memorySeedsPool,
-        memorySeedsSelected,
-        conversationFileName,
+        currentMemorySeedsPool,
+        currentMemorySeedsSelected,
+        currentConversationFileName,
     );
 }

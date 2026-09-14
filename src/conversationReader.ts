@@ -351,7 +351,11 @@ export function cleanAssistantResponse(text: string): string {
 export function cleanUserInput(text: string): string {
     return text
         .replace(
-            /\nFormat requirement: at the end of only this response add \*\*\*message \d+\*\*\*\s*$/,
+            /\[InternalChatID:\s*\d+\]\s*/g,
+            "",
+        )
+        .replace(
+            /Format requirement:.*?\*\*\*message \d+\*\*\*/,
             "",
         )
         .trim();
