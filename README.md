@@ -29,7 +29,14 @@ The plugin keeps the available memory pool in memory, injects selected memories 
 
 ## Setup
 
-> WIP
+From Website: Install from the LM Studio Hub then enable the plugin.
+
+From Terminal: Open powershell/terminal, navigate to root folder of the plugin you downloaded where you see the README, package, and manifest. Enter in `lms dev -i -y` . Plugin should now be available in LM Studio.
+
+Make sure the **`save_memory`** tool is enabled in the plugin's **Tools** section (this is mandatory — if it's off, the model can't use the plugin at all).
+
+To use, while the plugin is enabled, type to the model save memory message #, category category_name, name memory_name.
+If you forget the category or name the model should ask for it before running the tool. The plugin will ask the model to visually identify each message # to you, just base your # provided off what you're shown.
 
 ## Typical Workflow
 
@@ -44,9 +51,11 @@ The plugin keeps the available memory pool in memory, injects selected memories 
 
 ## How It Works
 
+![Image of Chat](chat_example.jpg)
+
 ### Prompt Preprocessing
 
-1. Through the use of preprompt processing, the memory seed is injected alongside the user's message on the newest user's turn.
+1. Through the use of prompt preprocessing, the memory seed is injected alongside the user's message on the newest user's turn.
 2. The added text will now be able to be referenced by the assistant.
 
 ### Saving a Memory
@@ -65,6 +74,8 @@ Removing and deleting are two distinct actions. Remove means your intention is t
 
 ## Configuration
 
+![Image of Plugin Control Panel](plugin-control-panel.jpg)
+
 | Field | Purpose |
 | --- | --- |
 | deleteMemorySeedsFile | Full name of the memory to delete from the pool. Deletion is permanent. |
@@ -80,17 +91,17 @@ This numbering makes it easier for users to refer to a specific exchange when as
 
 ## Technical Details
 
-- A memories folder will be created at.lmstudio/memories, and a .json that contains retains the relationship between the chat session and it's conversation file will be stored in .lmstudio/conversation.
-- Injection markers: memories will be injected within blocks of BEGIN and END markers containing the memory seed path. These markers allow for later removal of the memory.
-- Internal chat ID: the preprocessor will append an InternalChatID to mark the chat session. This marker helps to later identify the session and tie it to a conversation file.
+- A memories folder will be created at C:\Users\USERNAME\.lmstudio, and a .json file that retains the relationship between the chat session and its conversation file will be stored in C:\Users\USERNAME\.lmstudio\conversations.
+- Injection markers: memories will be injected within blocks of BEGIN and END markers containing the memory seed category/memory_name. These markers allow for later removal of the memory.
+- Internal chat ID: the preprocessor will append a one-time InternalChatID to mark the chat session. This marker helps to later identify the session and tie it to the corresponding conversation file.
 - Conversation mapping: the plugin stores a relationship file that maps internal chat IDs to conversation file names. It keeps only the newest twenty relationships.
-- Removal polling: when triggered memory removal polls the conversation file every two seconds until the assistant responds. Then will remove the memories from the conversation.
-- Path safety: memory names are normalized, but not to correct misspellings. It is easiest to copy and paste the memory name from the list displayed in Available Memories.
-- In-memory pool: the available memory pool is kept in memory and updated when files are deleted. Configuration updates may be delayed because of LM Studio plugin behavior.
+- Removal polling: when triggered memory removal, polls the conversation file every two seconds until the assistant finishes responding. Then it will remove the memories from the conversation.
+- Path safety: memory names are normalized, but not to correct misspellings. It is easiest to copy and paste the memory name from the list displayed in Available Memories into the text field of Selected Memories.
+- In-memory pool: the available memory pool is kept in memory and updated when files are deleted. Plugin UI updates may be delayed because of LM Studio plugin behavior, but on the backend these values are properly updated.
 
 ## Limitations or Notes
 
-- Injected context will not be hidden from the user, but visible to the assistant. User can ask the assistant to read out the injected context if you wish to see it.
+- Injected context will be hidden from the user, but visible to the assistant. User can ask the assistant to read out the injected context if you wish to see it.
 - LM Studio's SDK does not have full support to make this implementation easy. The methods chosen to accomplish this feature was mandatory during the time of creation of this plugin.
-- The plugin assumes LM Studio Windows 11 conversation files are accessible under the configured root directory.
-- The Memory bubbles displayed on the plugin do not update real-time. Again another limitation of LM Studio not giving a way to send updated data upstream back to the plugin UI. The memory bubbles will update when the tool reinitializes, so when it's left idle for awhile then interacted with, or if you click the trashcan "reset" button. There are already validation checks in the backend to prevent any bugs, so don't worry about it. If you choose memories that aren't available nothing will happen. If you add, remove, or delete memories that aren't active or exist, nothing will break. It'll just be a visual bug of the UI that will refresh upon it's next initialization.
+- The plugin assumes LM Studio Windows 11 conversation files are accessible under the configured root directory at C:\Users\USERNAME\.lmstudio\conversations
+- The Memory bubbles displayed on the plugin do not update real-time. Again another limitation of LM Studio not giving a way to send updated data upstream back to the plugin UI. The memory bubbles will update when the tool reinitializes, so when it's left idle for awhile then interacted with, or if you click the trashcan "reset" button. There are already validation checks in the backend to prevent any bugs, so don't worry about it. If you choose memories that aren't available, nothing will happen. If you add, remove, or delete memories that aren't active or exist, nothing will break. It'll just be a visual bug of the UI that will refresh upon it's next initialization.
