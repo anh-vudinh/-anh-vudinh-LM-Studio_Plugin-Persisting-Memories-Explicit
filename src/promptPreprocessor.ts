@@ -134,7 +134,7 @@ export async function promptPreprocessor(
         return (
             `${userText}\n` +
             `${createdNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
-            `${injectedContext}\n` +
+            `${injectedContext}[EOMem]\n` +
             `${numberingInstruction}`
         );
     }

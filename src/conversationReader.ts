@@ -355,7 +355,11 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /Format requirement:.*?\*\*\*message \d+\*\*\*/,
+            /THIS IS INJECTED CONTEXT FROM A PRIOR CONVERSATION:[\s\S]*?\[EOMem\]/g,
+            "",
+        )
+        .replace(
+            /Format requirement:.*?\*\*\*message \d+\*\*\*\.?/g,
             "",
         )
         .trim();
