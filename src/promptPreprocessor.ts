@@ -496,7 +496,7 @@ async function promptProcessorScanForConversationFile(
             relationships.push(relationshipData);
 
             // Control the file size
-            // Keep only the newest 20 relationships
+            // Keep only the newest Nth relationships
             if (relationships.length > relationshipsLimit) {
                 relationships = relationships.slice(-relationshipsLimit);
             }

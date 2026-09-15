@@ -119,6 +119,12 @@ export async function removeMemorySeeds(
 
                                 removeMemorySeedFromSelected(seedName);
                             }
+                            
+                            // Remove the injected-context wrapper if no // memory seeds remain inside it. 
+                            content.text = content.text.replace(
+                                /THIS IS INJECTED CONTEXT FROM A PRIOR CONVERSATION:\s*\[EOMem\]\s*/g,
+                                "",
+                            );
                         }
                     }
                 }
