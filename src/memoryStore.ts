@@ -120,28 +120,6 @@ export class MemoryStore {
     }
 
     /**
-     * Delete an entire memory category.
-     */
-    async deleteCategory(category: string): Promise<void> {
-        const directory = await this.getMemoriesDirectory();
-        const safeCategory = sanitizePathPart(category);
-
-        if (!safeCategory) {
-            throw new Error("Memory category cannot be empty.");
-        }
-
-        const categoryPath = path.join(
-            directory,
-            safeCategory,
-        );
-
-        await fs.rm(categoryPath, {
-            recursive: true,
-            force: true,
-        });
-    }
-
-    /**
      * Save a Memory Seed.
      *
      * Creates:
@@ -362,33 +340,6 @@ export class MemoryStore {
     ): Promise<MemorySeedInfo[]> {
         return this.listSeeds(category);
     }
-
-    /**
-     * Delete one Memory Seed.
-     */
-    // async deleteSeed(
-    //     category: string,
-    //     name: string,
-    // ): Promise<void> {
-    //     const directory = await this.getMemoriesDirectory();
-
-    //     const safeCategory = sanitizePathPart(category);
-    //     const safeName = sanitizeFilename(name);
-
-    //     if (!safeCategory || !safeName) {
-    //         throw new Error("Invalid Memory Seed path.");
-    //     }
-
-    //     const filePath = path.join(
-    //         directory,
-    //         safeCategory,
-    //         `${safeName}.json`,
-    //     );
-
-    //     await fs.rm(filePath, {
-    //         force: true,
-    //     });
-    // }
 
     /**
      * Check whether a category exists.

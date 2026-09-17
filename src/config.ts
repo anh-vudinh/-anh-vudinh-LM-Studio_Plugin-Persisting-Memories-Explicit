@@ -26,9 +26,9 @@ export function createConfig(
             "string",
             {
                 displayName: "Delete Memory",
-                subtitle: " This does not remove already injected memories. This removes it from the available memories pool.",
+                subtitle: " *WARNING* This does not remove already injected memories. This is a final action to permenantly delete a memory.",
                 warning: "The selected memories will be permenantly deleted.",
-                placeholder: "Full name the memory to delete from the pool.",
+                placeholder: "Full name the memory to delete. Copy/paste from available memories.",
             },
             "",
         )
@@ -46,8 +46,8 @@ export function createConfig(
             "memorySeedsSelected",
             "stringArray",
             {
-                displayName: "Selected Memories",
-                subtitle: "Injects a memory into context.",
+                displayName: "Memories to Inject",
+                subtitle: "Injects a memory into context. Copy/paste from available memories.",
                 allowEmptyStrings: false,
                 warning: "Only the memories listed below will persist through turns.",
             },

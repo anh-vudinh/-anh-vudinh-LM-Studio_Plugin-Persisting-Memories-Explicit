@@ -1,5 +1,5 @@
-let memorySeedsPool: readonly string[] = [];
-let memorySeedsSelected: readonly string[] = [];
+let memorySeedsPool: readonly string[] = Object.freeze([]);
+let memorySeedsSelected: readonly string[] = Object.freeze([]);
 
 /*
 * MemorySeedsPool Getters and Setters
@@ -17,9 +17,10 @@ export function getMemorySeedsPool(): readonly string[] {
 export function removeMemorySeedFromPool(
     memorySeed: string,
 ): void {
-
-    memorySeedsPool = memorySeedsPool.filter(
-        (seed) => seed !== memorySeed,
+    memorySeedsPool = Object.freeze(
+        memorySeedsPool.filter(
+            (seed) => seed !== memorySeed,
+        ),
     );
 }
 
@@ -63,7 +64,9 @@ export function addMemorySeedToSelected(
 export function removeMemorySeedFromSelected(
     memorySeed: string,
 ): void {
-    memorySeedsSelected = memorySeedsSelected.filter(
-        (seed) => seed !== memorySeed,
+    memorySeedsSelected = Object.freeze(
+        memorySeedsSelected.filter(
+            (seed) => seed !== memorySeed,
+        ),
     );
 }

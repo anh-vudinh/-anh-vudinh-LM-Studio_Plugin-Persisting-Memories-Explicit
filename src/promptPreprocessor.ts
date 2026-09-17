@@ -3,8 +3,8 @@ import { setCurrentConversationHistory, getCurrentConversationHistory } from "./
 import { getMemorySeedsPool, updateMemorySeedsSelected, addMemorySeedToSelected, getMemorySeedsSelected } from "./memorySession";
 import { isEligibleAssistantMessage } from "./conversationReader";
 import { memoryStore } from "./memoryStore";
-import { removeMemorySeeds, validateConversationFile, findAllConversationFiles } from "./removeMemorySeeds";
-import { readFile, writeFile, access } from "node:fs/promises";
+import { removeMemorySeeds } from "./removeMemorySeeds";
+import { readFile, writeFile, access, readdir, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import path from "node:path";
 
@@ -14,6 +14,8 @@ import type {
 } from "@lmstudio/sdk";
 
 let injectedMemorySeeds: string[] | null = null;
+let createNewInternalChatID: boolean;
+let cleanupAllSeeds: boolean;
 let internalChatID = "";
 const relationshipsLimit = 15;
 
@@ -21,18 +23,49 @@ export async function promptPreprocessor(
     ctl: PromptPreprocessorController,
     userMessage: ChatMessage,
 ): Promise<string | ChatMessage> {
+
+    // Establish directories
     const memoriesDirectory = await memoryStore.getMemoriesDirectory();
+
+    // Establish initial variable values
     const config = ctl.getPluginConfig(configSchematics);
+    const memorySeedsPool = getMemorySeedsPool();
     const memorySeedsSelected = config.get("memorySeedsSelected") as string[];
     let conversationFileName = config.get("conversationFileName") as string;
-    const memorySeedsPool = getMemorySeedsPool();
     const history = await ctl.pullHistory();
-    
     await setCurrentConversationHistory(history);
-
     const messages = (await getCurrentConversationHistory()).getMessagesArray();
     const userText = userMessage.getText();
 
+    // Assume values can be lost during future runs because of random plugin reinitialization
+
+    // Read History to see check for an InternalChatID
+    if (internalChatID === "") {
+        internalChatID = await promptProcessorScanHistoryForID(messages);
+        console.log("internalChatID",internalChatID)
+        if (internalChatID !== "") {
+            createNewInternalChatID = false;
+        }
+    }
+
+    // First check of History for InternalChatID returned nothing
+    // So we must create one
+    if (internalChatID ===  "") {
+        createNewInternalChatID = true;
+    }
+    
+    // Assign an InternalChatID
+    if (createNewInternalChatID === true) {
+        internalChatID = Date.now().toString();
+    }
+
+    // Use the pre-exisiting InternalChatID found
+    // to find the matching conversation file
+    conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText);
+
+    // Read the user's currently selected memories from plugin
+    // Note use memorySeedsSelected over getMemorySeedsSelected() <- which does not update real-time
+    
     // Cleaning up whitespaces only, not mispellings
     const normalizedMemorySeedsSelected =
         memorySeedsSelected.map(
@@ -44,7 +77,7 @@ export async function promptPreprocessor(
                         ".json",
                     ),
         );
-        
+
     // Compare selected seeds stored in .config to see if they're
     // actually from the available memory pool
     const validMemorySeedsSelected = [
@@ -58,16 +91,11 @@ export async function promptPreprocessor(
         ),
     ];
 
-    // Establish the memory seeds that have already been
-    // injected into this conversation using history.messagesArray()
-    if (injectedMemorySeeds === null || injectedMemorySeeds.length > 0) {
+    // Scan file first for injected seeds
+    injectedMemorySeeds = await promptProcessorConversationFileScanForPreviousSeeds(conversationFileName, [...memorySeedsPool]);
 
-        injectedMemorySeeds = [];
-
-        injectedMemorySeeds = await promptProcessorHistoryScanForPreviousSeeds();
-    }
-
-    // Find selected memory seeds that have not already been injected.
+    // Deterimine only new memory seeds to inject
+    // This means new additions from config memorySeedsSelected
     const newMemorySeeds =
         validMemorySeedsSelected.filter(
             (memorySeed) =>
@@ -75,17 +103,6 @@ export async function promptPreprocessor(
                     memorySeed,
                 ),
         );
-
-    // console.log(
-    //     "[MEMORY TEST] history:",
-    //     history.getMessagesArray().map(
-    //         (message, index) => ({
-    //             index,
-    //             role: message.getRole(),
-    //             text: message.getText(),
-    //         }),
-    //     ),
-    // );
 
     // New valid seeds waiting to be injected
     let injectedContext = "";
@@ -95,101 +112,318 @@ export async function promptPreprocessor(
         injectedContext = await promptProcessorConstructMemoriesToInject(newMemorySeeds, memoriesDirectory);
     }
 
+    // Create the memories string to inject
+
     // Model appends message # at the end of the it's response
     // prerequisite to instructing to save memory
     const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
     const numberingInstruction = `Format requirement: at the end of your response add ***message ${assistantIndex}***.`;
-
-    // Find or assign a unique ID for this chat session
-    let createdNewInternalChatID = false;
-
-    if (internalChatID === "") {
-
-        // Search through history for it's existence
-        internalChatID = await promptProcessorScanHistoryForID();
-        
-        // History did not show it so now we give it one
-        // promptProcessorScanForConversationFile will use to connect them together
-        if (internalChatID === "") {
-            internalChatID = Date.now().toString();
-            createdNewInternalChatID = true;
-        }
+    
+    // Remove all memory seeds
+    const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
+    if(memorySeedsSelected.length === 0 && areSeedsDetectedInHistory === true) {
+        cleanupAllSeeds = true;
+        await promptProcessorRemoveSeeds(conversationFileName, injectedMemorySeeds, validMemorySeedsSelected, cleanupAllSeeds);
+        injectedMemorySeeds = [];
     }
 
-    // Check ChatSessionConversationRelationship.json for pre-established relationship
-    // or scan each conversation.json until we find the matching one
-    if(conversationFileName === "") {
-
-        conversationFileName = await promptProcessorScanForConversationFile(createdNewInternalChatID);
-    }
-
-    // Remove memory seeds the user no longer wants
-    if (injectedMemorySeeds !== null) {
-
-        injectedMemorySeeds = await promptProcessorRemoveSeeds(ctl, injectedMemorySeeds, validMemorySeedsSelected);
+    // Remove specific memory seeds the user no longer wants
+    // after the model has finished responding
+    if(memorySeedsSelected.length > 0) {
+        cleanupAllSeeds = false;
+        injectedMemorySeeds = await promptProcessorRemoveSeeds(conversationFileName, injectedMemorySeeds, validMemorySeedsSelected, cleanupAllSeeds);
     }
 
     if (injectedContext) {
 
         return (
             `${userText}\n` +
-            `${createdNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
-            `${injectedContext}[EOMem]\n` +
+            `${createNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
+            `${injectedContext}[END OF MEMORIES]\n` +
             `${numberingInstruction}`
         );
     }
 
     return (
         `${userText}\n` +
-        `${createdNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
+        `${createNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
         `${numberingInstruction}`
     );
 }
 
-async function promptProcessorHistoryScanForPreviousSeeds(): Promise<string[]> {
+async function promptProcessorScanHistoryForID(
+    messages: ChatMessage[],
+): Promise<string> {
 
-    let foundPastInjectedMemorySeed: string[] = [];
-    const memorySeedsPool = getMemorySeedsPool();
-    const messages = (await getCurrentConversationHistory()).getMessagesArray();
+    let searchedInternalChatID = "";
 
-    for (
-        const message
-        of messages
-    ) {
-        const text =
-            message.getText();
+    for (const message of messages) {
+        if ((message as any).data.role !== "user") {
+            continue;
+        }
 
-        const matches =
-            text.matchAll(
-                /\[BEGIN ([^\]]+)\]/g,
+        for (const content of (message as any).data.content ?? []) {
+            if (content.type !== "text" || !content.text) {
+                continue;
+            }
+
+            const match = content.text.match(
+                /\[InternalChatID:\s*(\d+)\]/
             );
 
-        for (const match of matches) {
-            const memorySeed =
-                match[1].trim();
+            if (match) {
+                searchedInternalChatID = match[1];
+                break;
+            }
+        }
+
+        if (searchedInternalChatID !== "") {
+            break;
+        }
+    }
+
+    return searchedInternalChatID;
+}
+
+async function promptProcessorScanForConversationFile(
+    internalChatID: string,
+    userText: string,
+): Promise<string> {
+    const rootDirectory = await memoryStore.getRootDirectory();
+    let relationships: any[] = [];
+    let foundConversationFileName = "";
+
+    // Construct the path to the conversation file
+    const conversationDirectory = join(
+        rootDirectory,
+        "conversations"
+    );
+
+    const relationshipFile = join(
+        conversationDirectory,
+        "ChatSessionConversationRelationship.json",
+    );
+
+    // Read the relationship file
+    try {
+        const relationshipJson = await readFile(
+            relationshipFile,
+            "utf-8",
+        );
+
+        relationships = JSON.parse(relationshipJson);
+
+    } catch {
+        // File doesn't exist yet, so we'll create it in a later step.
+    }
+
+    // We've already found or assigned an InternalChatID
+    // Take the ICID check if there is an existing relationship
+    // in the relationship json.
+    const existingRelationship = relationships.find(
+        (relationship) =>
+            relationship.internalChatID === internalChatID,
+    );
+
+    // STEP 1: If there is a current relationship check if the conversation file
+    // still exist, if the file does not exist remove the entry
+    if (existingRelationship) {
+
+        // Retrieve the full conversation file name.
+        const conversationFileName = existingRelationship.conversationFile;
+
+        const conversationFilePath = join(
+            conversationDirectory,
+            conversationFileName,
+        );
+
+        try {
+            await access(conversationFilePath);
+
+            // File exists
+            foundConversationFileName = conversationFileName;
+        } catch {
+            // Conversation file no longer exists.
+            relationships = relationships.filter(
+                (relationship) =>
+                    relationship.internalChatID !== internalChatID,
+            );
+
+            await writeFile(
+                relationshipFile,
+                JSON.stringify(relationships, null, 2),
+                "utf-8",
+            );
+        }
+
+        // STEP 2: If the conversation file still exist, open it to confirm for ICID
+        if (foundConversationFileName !== "") {
+
+            const conversationContent = await readFile(
+                conversationFilePath,
+                "utf-8",
+            );
+
+            const internalChatIDPattern = new RegExp(
+                `\\[InternalChatID:\\s*${internalChatID}\\]`,
+            );
+
+            // STEP 2.1: If the ICID matches, conversation file found
+            if (internalChatIDPattern.test(conversationContent)) {
+
+                return foundConversationFileName;
+            }
+        }
+    }
+
+    // STEP 2.2: If the ICID doesn't match continue to scan in STEP 3.
+
+    // STEP 3: Perform a scan of each conversation file starting from the newest
+    // to search for the ICID because by now it should already exist
+    const allConversationFiles = await findAllConversationFiles(conversationDirectory);
+
+    let matchingConversationFile: string | null = null;
+
+    const internalChatIDPattern = new RegExp(
+        `\\[InternalChatID:\\s*${internalChatID}\\]`,
+    );
+
+    for (const conversationFile of allConversationFiles) {
+        const conversationContent = await readFile(
+            conversationFile,
+            "utf-8",
+        );
+
+        // First try to match the InternalChatID.
+        if (internalChatIDPattern.test(conversationContent)) {
+            matchingConversationFile = conversationFile;
+            break;
+        }
+
+        // Fallback for brand-new conversations where the
+        // InternalChatID has not yet been injected.
+        try {
+            const conversation = JSON.parse(
+                conversationContent,
+            );
+
+            const clientInput = conversation.clientInput?.trim() ?? "";
+            const input = userText.trim();
 
             if (
-                // Only track memory seeds found in history that exist in the memory pool.
-                memorySeedsPool.includes(
-                    memorySeed,
-                ) &&
-                // Avoid tracking the same memory seed more than once.
-                !foundPastInjectedMemorySeed.includes(
-                    memorySeed,
-                )
+                clientInput.length > 0 &&
+                input.startsWith(clientInput)
             ) {
-                foundPastInjectedMemorySeed.push(
-                    memorySeed,
-                );
+                matchingConversationFile = conversationFile;
+                break;
             }
+        } catch {
+            // Ignore malformed conversation files and continue scanning.
+        }
+        
+    }
+
+    // Found the match, so add it as a relationship in
+    // ChatSessionConversationRelationship.json.
+    if (matchingConversationFile !== null) {
+        const conversationFileName = basename(
+            matchingConversationFile,
+        );
+
+        const relationshipData = {
+            internalChatID,
+            conversationFile: conversationFileName,
+        };
+
+        relationships.push(relationshipData);
+
+        // Control the file size.
+        // Keep only the newest Nth relationships.
+        if (relationships.length > relationshipsLimit) {
+            relationships = relationships.slice(-relationshipsLimit);
+        }
+
+        await writeFile(
+            relationshipFile,
+            JSON.stringify(relationships, null, 2),
+            "utf-8",
+        );
+
+        foundConversationFileName = conversationFileName;
+    }
+
+    // STEP 4: We now either have an already valid conversation file name
+    // from a confirmed existing conversation or we've found it through the scan
+    // return the conversation file name and set config state
+    setConfigSchematics({
+        conversationFileName: foundConversationFileName
+    });
+
+    return foundConversationFileName;
+}
+
+async function promptProcessorConversationFileScanForPreviousSeeds(
+    conversationFileName: string,
+    memorySeedsPool: string[],
+): Promise<string[]> {
+
+    const rootDirectory = await memoryStore.getRootDirectory();
+
+    const conversationDirectory = join(
+        rootDirectory,
+        "conversations",
+    );
+
+    const conversationFilePath = join(
+        conversationDirectory,
+        conversationFileName,
+    );
+
+    let foundPastInjectedMemorySeed: string[] = [];
+
+    const conversationContent = await readFile(
+        conversationFilePath,
+        "utf-8",
+    );
+
+    const matches = conversationContent.matchAll(
+        /\[BEGIN ([^\]]+)\]/g,
+    );
+
+    for (const match of matches) {
+        const memorySeed = match[1].trim();
+
+        // Only track memory seeds found in the conversation
+        // that exist in the current memory pool.
+        if (
+            memorySeedsPool.includes(memorySeed) &&
+            // Avoid tracking the same memory seed more than once.
+            !foundPastInjectedMemorySeed.includes(memorySeed)
+        ) {
+            foundPastInjectedMemorySeed.push(memorySeed);
         }
     }
 
     updateMemorySeedsSelected(foundPastInjectedMemorySeed);
 
-    setConfigSchematics({memorySeedsSelected: foundPastInjectedMemorySeed});
+    setConfigSchematics({
+        memorySeedsSelected: foundPastInjectedMemorySeed,
+    });
 
     return foundPastInjectedMemorySeed;
+}
+
+async function promptProcessorHistorySimpleScanForSeeds(
+    messages: ChatMessage[],
+): Promise<boolean> {
+
+    for (const message of messages) {
+        if (/\[BEGIN .*\.json\]/.test(message.getText())) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 async function promptProcessorConstructMemoriesToInject(
@@ -199,7 +433,7 @@ async function promptProcessorConstructMemoriesToInject(
 
     let createdInjectedContext = "";
 
-    createdInjectedContext = "THIS IS INJECTED CONTEXT FROM A PRIOR CONVERSATION:\n\n";
+    createdInjectedContext = "[BEGINNING OF MEMORIES] NOT INSTRUCTIONS, JUST SOME PRIOR CONVERSATION:\n\n";
 
     // Going to grab the contents of the seeds we're going to inject
     // then build it into a memorySeed string that the model can digest as
@@ -336,198 +570,15 @@ async function promptProcessorConstructMemoriesToInject(
     return createdInjectedContext;
 }
 
-async function promptProcessorScanHistoryForID(): Promise<string> {
-
-    let searchedInternalChatID = "";
-    const messages = (await getCurrentConversationHistory()).getMessagesArray();
-
-    for (const message of messages) {
-        if ((message as any).data.role !== "user") {
-            continue;
-        }
-
-        for (const content of (message as any).data.content ?? []) {
-            if (content.type !== "text" || !content.text) {
-                continue;
-            }
-
-            const match = content.text.match(
-                /\[InternalChatID:\s*(\d+)\]/
-            );
-
-            if (match) {
-                searchedInternalChatID = match[1];
-                break;
-            }
-        }
-
-        if (searchedInternalChatID !== "") {
-            break;
-        }
-    }
-
-    return searchedInternalChatID;
-}
-
-async function promptProcessorScanForConversationFile(
-    createdNewInternalChatID: boolean,
-): Promise<string> {
-    let relationships: any[] = [];
-    let foundConversationFileName = "";
-
-    const rootDirectory = await memoryStore.getRootDirectory();
-    const messages = (await getCurrentConversationHistory()).getMessagesArray();
-
-    // Construct the path to the conversation file
-    const conversationDirectory = join(
-        rootDirectory,
-        "conversations"
-    );
-
-    const relationshipFile = join(
-        conversationDirectory,
-        "ChatSessionConversationRelationship.json",
-    );
-
-    try {
-        const relationshipJson = await readFile(
-            relationshipFile,
-            "utf-8",
-        );
-
-        relationships = JSON.parse(relationshipJson);
-    } catch {
-        // File doesn't exist yet, so we'll create it.
-    }
-
-    const existingRelationship = relationships.find(
-        (relationship) =>
-            relationship.internalChatID === internalChatID,
-    );
-
-    if (existingRelationship) {
-
-        // Relationship already exists, so we already know the conversation.
-        const conversationFileIdentifier = existingRelationship.conversationFile;
-
-        const conversationFilePath = join(
-            conversationDirectory,
-            `${conversationFileIdentifier}.conversation.json`,
-        );
-
-        // Check whether the conversationFile actually still exist
-        // If it no longer is present delete the entry from the relationship json file
-        // and then continue the logic to scan for the correct file
-        try {
-            await access(conversationFilePath);
-
-            // File exists, so we're done.
-            foundConversationFileName = conversationFileIdentifier;
-        } catch {
-            // Conversation file no longer exists.
-            relationships = relationships.filter(
-                (relationship) =>
-                    relationship.internalChatID !== internalChatID,
-            );
-
-            await writeFile(
-                relationshipFile,
-                JSON.stringify(relationships, null, 2),
-                "utf-8",
-            );
-        }
-    }
-
-    // If we found the the InternalChatID but did not find an entry in our relationships.json
-    // we have to go find the matching conversation and populate the relationship.json
-    // or if the internalID was not found in either history messages or the relationship.json
-    // Now we grab all the files in conversation folder to try and figure out which
-    // conversation file belongs to this chat
-    if (createdNewInternalChatID || (existingRelationship === undefined && internalChatID !== "") || foundConversationFileName === "") {
-
-        const allConversationFiles = await findAllConversationFiles(conversationDirectory);
-        let matchingConversationFile: string | null = null;
-
-        // Reading first user and assistant exchange to see if this is the 
-        // same conversation file as the chat session
-        for (const conversationFile of allConversationFiles) {
-
-            const conversationJson = await readFile(
-                conversationFile,
-                "utf-8",
-            );
-
-            const conversation = JSON.parse(conversationJson);
-
-            const isValid = await validateConversationFile(
-                conversation,
-                messages,
-            );
-
-            if (isValid) {
-                matchingConversationFile = conversationFile;
-                break;
-            }
-        }
-
-        // Found the match so we add it as a
-        // relationship in ChatSessionConversationRelationship.json
-        if (matchingConversationFile !== null) {
-            const convoFileName = basename(
-                matchingConversationFile,
-            );
-
-            const conversationFileIdentifier =
-                convoFileName.endsWith(".conversation.json")
-                    ? convoFileName.replace(
-                        ".conversation.json",
-                        "",
-                    )
-                    : convoFileName.replace(
-                        ".json",
-                        "",
-                    );
-
-            const relationshipData = {
-                internalChatID,
-                conversationFile: conversationFileIdentifier,
-            };
-
-            relationships.push(relationshipData);
-
-            // Control the file size
-            // Keep only the newest Nth relationships
-            if (relationships.length > relationshipsLimit) {
-                relationships = relationships.slice(-relationshipsLimit);
-            }
-
-            await writeFile(
-                relationshipFile,
-                JSON.stringify(relationships, null, 2),
-                "utf-8",
-            );
-
-            foundConversationFileName = conversationFileIdentifier;
-        }
-    }
-
-    setConfigSchematics({conversationFileName: foundConversationFileName});
-
-    return foundConversationFileName;
-}
-
 async function promptProcessorRemoveSeeds(
-    ctl: PromptPreprocessorController,
+    conversationFileName: string,
     injectedMemorySeeds: string[],
     validMemorySeedsSelected: string[],
+    cleanupAllSeeds: boolean,
 ): Promise<string[]> {
 
-    const config = ctl.getPluginConfig(configSchematics);
-
     // Here we check if there were actually seeds removed by the user
-    // Removal is assumed when the seed no longer exists in .config
-    // but still exists within the actual history.messagesArray()
-    const removedMemorySeeds =
+    const memorySeedsToRemove =
         injectedMemorySeeds.filter(
             (memorySeed) =>
                 !validMemorySeedsSelected.includes(
@@ -536,20 +587,72 @@ async function promptProcessorRemoveSeeds(
         );
     
     // Second chceck to make sure there's actually something to remove
-    if(removedMemorySeeds.length > 0) {
+    if(memorySeedsToRemove.length > 0) {
 
-        await removeMemorySeeds(config, removedMemorySeeds);
+        injectedMemorySeeds = await removeMemorySeeds(conversationFileName, validMemorySeedsSelected, memorySeedsToRemove, cleanupAllSeeds);
 
-        // need to set injectedMemorySeeds to match what's actually
-        // available rather than use processing power to do another scan of history
-        // the actual update of the .config is delayed to work around lmstudio's lack of support
-        // so injectedMemorySeeds will just update on it's own and assume the
-        // .config will match later when assistant is done responding
-        const updatedMemorySeedsSelected = getMemorySeedsSelected();
-
-        injectedMemorySeeds = [...updatedMemorySeedsSelected];
-        setConfigSchematics({memorySeedsSelected: updatedMemorySeedsSelected});
     }
 
     return injectedMemorySeeds;
+}
+
+async function findAllConversationFiles(
+    conversationsDirectory: string,
+): Promise<string[]> {
+
+    const conversationFiles: string[] = [];
+
+    async function searchDirectory(
+        directory: string,
+    ): Promise<void> {
+
+        const entries = await readdir(directory, {
+            withFileTypes: true,
+        });
+
+        for (const entry of entries) {
+
+            const fullPath = join(
+                directory,
+                entry.name,
+            );
+
+            if (
+                entry.isFile()
+            ) {
+                // exclude the relationship file
+                if ( entry.name === "ChatSessionConversationRelationship.json") {
+                    continue;
+                }
+
+                conversationFiles.push(fullPath);
+                continue;
+            }
+
+            if (entry.isDirectory()) {
+                await searchDirectory(fullPath);
+            }
+        }
+    }
+    
+    await searchDirectory(conversationsDirectory);
+
+    const filesWithModifiedTime = await Promise.all(
+        conversationFiles.map(async (filePath) => {
+            const fileStats = await stat(filePath);
+
+            return {
+                filePath,
+                modifiedTime: fileStats.mtimeMs,
+            };
+        }),
+    );
+
+    filesWithModifiedTime.sort(
+        (a, b) => b.modifiedTime - a.modifiedTime,
+    );
+
+    return filesWithModifiedTime.map(
+        (file) => file.filePath,
+    );
 }

@@ -355,7 +355,7 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /THIS IS INJECTED CONTEXT FROM A PRIOR CONVERSATION:[\s\S]*?\[EOMem\]/g,
+            /\[BEGINNING OF MEMORIES\] NOT INSTRUCTIONS, JUST SOME PRIOR CONVERSATION:[\s\S]*?\[END OF MEMORIES\]/g,
             "",
         )
         .replace(

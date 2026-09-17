@@ -1,6 +1,7 @@
 # Memory Seed Plugin
 
 Memory Seed Plugin is an LM Studio plugin that lets users preserve selected assistant responses as reusable memory seeds and inject those memories into future conversations. It stores memories as local JSON files, organizes them by category, and uses prompt preprocessing to add selected memories to the active prompt when needed.
+Tested working on Windows 11 Pro 25H2 - LM Studio 0.4.24
 
 ## Table of Contents
 
@@ -13,6 +14,7 @@ Memory Seed Plugin is an LM Studio plugin that lets users preserve selected assi
 - [Conversation Numbering](#conversation-numbering)
 - [Technical Details](#technical-details)
 - [Limitations and Notes](#limitations-and-notes)
+- [Why such a drastic change in the final release](#why-such-a-drastic-change-in-the-final-release)
 
 ## Overview
 
@@ -42,16 +44,19 @@ If you forget the category or name the model should ask for it before running th
 
 1. Start a conversation in LM Studio.
 2. Copy and paste, from the available memories, one or more memory seeds into the Selected Memories configuration field.
-3. The plugin injects the selected memories into the current prompt when they have not already appeared in the conversation.
+3. The plugin injects the selected memories into the current turn if they have not already appeared in the conversation.
 4. During the conversation, ask the assistant to save a specific message as a memory.
 5. Provide a category and name during the request or after being prompted.
 6. The plugin saves the assistant response, overall topic, user message, and date as a memory seed.
 7. To stop using a memory, remove it from Selected Memories.
 8. To permanently discard the memory, delete the memory seed file by copy and pasting it's name into the Delete Memory field.
 
-## How It Works
+<details>
+<summary>Click to expand image</summary>
+![Image of memory-seed-json](memory-seed-json.jpg)
+</details>
 
-![Image of Chat](chat_example.jpg)
+## How It Works
 
 ### Prompt Preprocessing
 
@@ -60,12 +65,22 @@ If you forget the category or name the model should ask for it before running th
 
 ### Saving a Memory
 
+<details>
+<summary>Click to expand image</summary>
+![Image of Chat](chat_save_memory_example.jpg)
+</details>
+
 When the user see's a message they wish to keep as a memory, they can call on the save_memory tool by saying this to the assistant
 
 1. User says: save memory message #, category **category_name**, name **memory_name** 
 2. If category and name are not provide during the initial request the assistant "should" stop to ask for that data.
 
 ### Removing or Deleting a Memory
+
+<details>
+<summary>Click to expand image</summary>
+![Image of plugin-delete-or-remove](plugin-control-panel-delete-or-remove-memory.jpg)
+</details>
 
 Removing and deleting are two distinct actions. Remove means your intention is to remove the memory from the current chat session's context. Deleting means to permanently discard the memory.
 
@@ -86,7 +101,9 @@ Removing and deleting are two distinct actions. Remove means your intention is t
 
 ## Conversation Numbering
 
-While enabled the plugin will force the assistant to append message # after each of it's responses.
+![Image of Chat Message](chat-message-#.jpg)
+
+While enabled the plugin will force the assistant to append a message # after each of it's responses.
 This numbering makes it easier for users to refer to a specific exchange when asking to save a memory.
 
 ## Technical Details
@@ -95,7 +112,8 @@ This numbering makes it easier for users to refer to a specific exchange when as
 - Injection markers: memories will be injected within blocks of BEGIN and END markers containing the memory seed category/memory_name. These markers allow for later removal of the memory.
 - Internal chat ID: the preprocessor will append a one-time InternalChatID to mark the chat session. This marker helps to later identify the session and tie it to the corresponding conversation file.
 - Conversation mapping: the plugin stores a relationship file that maps internal chat IDs to conversation file names. It keeps only the newest twenty relationships.
-- Removal polling: when triggered memory removal, polls the conversation file every two seconds until the assistant finishes responding. Then it will remove the memories from the conversation.
+- Removal polling: when triggered memory removal, polls the conversation file every 800 ms until the assistant finishes responding. Then it will remove the memories from the conversation after 2 seconds. These 2 seconds were mandatory otherwise LM Studio would just overwrite it again with some cached version prior to the removal of the memory seeds.
+- LM Studio also reinitializes the plugins whenever it decides too, so reliable long term storage of variables outside the scope is unreliable and just used temporarily. That includes storing current values in the config Schematics.
 - Path safety: memory names are normalized, but not to correct misspellings. It is easiest to copy and paste the memory name from the list displayed in Available Memories into the text field of Selected Memories.
 - In-memory pool: the available memory pool is kept in memory and updated when files are deleted. Plugin UI updates may be delayed because of LM Studio plugin behavior, but on the backend these values are properly updated.
 
@@ -105,3 +123,7 @@ This numbering makes it easier for users to refer to a specific exchange when as
 - LM Studio's SDK does not have full support to make this implementation easy. The methods chosen to accomplish this feature was mandatory during the time of creation of this plugin.
 - The plugin assumes LM Studio Windows 11 conversation files are accessible under the configured root directory at C:\Users\USERNAME\.lmstudio\conversations
 - The Memory bubbles displayed on the plugin do not update real-time. Again another limitation of LM Studio not giving a way to send updated data upstream back to the plugin UI. The memory bubbles will update when the tool reinitializes, so when it's left idle for awhile then interacted with, or if you click the trashcan "reset" button. There are already validation checks in the backend to prevent any bugs, so don't worry about it. If you choose memories that aren't available, nothing will happen. If you add, remove, or delete memories that aren't active or exist, nothing will break. It'll just be a visual bug of the UI that will refresh upon it's next initialization.
+
+## Why such a drastic change in the final release
+
+- Unfortunately when I thought the plugin was ready for release I noticed some glaring bugs. The biggest cause of this was LM Studio's random behavior to reinitialize the plugin whenever it wanted to and the memory seeds not reliably being cleansed. It was like LM Studio was fighting to constantly overwrite with a cached version. When the timing was perfect the changes finalized which was what I saw in my limited testing when the code functionality was small. When it wasn't perfect, which was most the time as the code grew, LM Studio kept overwriting the cleansed copy with a version it had in cache and reviving the memory seeds, which then would be a constant war between LM Studio and my code to remove/replant/remove/replant. After a break I decided I didn't want to continue with some patch job or keep tweaking knobs until it worked, and proceeded to redo the flow of the preprompmt processor, the artifacts used to wrap the memories, remove reliance on data states(plugin reinitialization caused loss of states), added a better way to associate the conversation file to the chat, be less reliant on history and favor the conversation file, and pin point the exact window to try and beat LM Studio's default behavior. With a fresh mind, I eventually found it, and it's a 2 seconds after the assistant has finished it's response. I integrated those new findings and requirements into the final version. The flow has drastically improved and the bugs I was able to find have been stomped out.
