@@ -33,7 +33,7 @@ The plugin keeps the available memory pool in memory, injects selected memories 
 
 From LM Studio Website: Install from the LM Studio Hub then enable the plugin.
 
-From Github Source Code: Open powershell/terminal, navigate to root folder of the plugin you downloaded where you see the README, package, and manifest. Enter in `lms dev -i -y` . Plugin should now be available in LM Studio.
+From GitHub Source Code: Open PowerShell/terminal, navigate to root folder of the plugin you downloaded where you see the README, package, and manifest. Enter in `lms dev -i -y` . Plugin should now be available in LM Studio.
 
 Make sure the **`save_memory`** tool is enabled in the plugin's **Tools** section (this is mandatory — if it's off, the model can't use the plugin at all).
 
@@ -93,9 +93,9 @@ Removing and deleting are two distinct actions. Remove means your intention is t
 
 | Field | Purpose |
 | --- | --- |
-| deleteMemorySeedsFile | Full name of the memory to delete from the pool. Deletion is permanent. |
-| memorySeedsPool | Display-only list of available memories. Users copy names from this list into Selected Memories. |
-| memorySeedsSelected | Memories that should be injected into the current session. Only the listed memories persist through turns. |
+| Delete Memory | Full name of the memory to delete from the pool. Deletion is permanent. |
+| Available Memories | Display-only list of available memories. Users copy names from this list into Selected Memories. |
+| Memories to Inject | Memories that should be injected into the current session. Only the listed memories persist through turns. |
 
 ## Tools
 
@@ -108,11 +108,11 @@ This numbering makes it easier for users to refer to a specific exchange when as
 
 ## Technical Details
 
-- A memories folder will be created at C:\Users\USERNAME\.lmstudio, and a .json file that retains the relationship between the chat session and its conversation file will be stored in C:\Users\USERNAME\.lmstudio\conversations.
+- A memories folder will be created at `C:\Users\USERNAME\.lmstudio`, and a `.json` file that retains the relationship between the chat session and its conversation file will be stored in `C:\Users\USERNAME\.lmstudio\conversations`.
 - Injection markers: memories will be injected within blocks of BEGIN and END markers containing the memory seed category/memory_name. These markers allow for later removal of the memory.
 - Internal chat ID: the preprocessor will append a one-time InternalChatID to mark the chat session. This marker helps to later identify the session and tie it to the corresponding conversation file.
 - Conversation mapping: the plugin stores a relationship file that maps internal chat IDs to conversation file names. It keeps only the newest twenty relationships.
-- Removal polling: when triggered memory removal, polls the conversation file every 800 ms until the assistant finishes responding. Then it will remove the memories from the conversation after 2 seconds. These 2 seconds were mandatory otherwise LM Studio would just overwrite it again with some cached version prior to the removal of the memory seeds.
+- Removal polling: when triggered memory removal, polls the conversation file every `800 ms` until the assistant finishes responding. Then it will remove the memories from the conversation after 2 seconds. These 2 seconds were mandatory otherwise LM Studio would just overwrite it again with some cached version prior to the removal of the memory seeds.
 - LM Studio also reinitializes the plugins whenever it decides too, so reliable long term storage of variables outside the scope is unreliable and just used temporarily. That includes storing current values in the config Schematics.
 - Path safety: memory names are normalized, but not to correct misspellings. It is easiest to copy and paste the memory name from the list displayed in Available Memories into the text field of Selected Memories.
 - In-memory pool: the available memory pool is kept in memory and updated when files are deleted. Plugin UI updates may be delayed because of LM Studio plugin behavior, but on the backend these values are properly updated.
@@ -121,9 +121,9 @@ This numbering makes it easier for users to refer to a specific exchange when as
 
 - Injected context will be hidden from the user, but visible to the assistant. User can ask the assistant to read out the injected context if you wish to see it.
 - LM Studio's SDK does not have full support to make this implementation easy. The methods chosen to accomplish this feature was mandatory during the time of creation of this plugin.
-- The plugin assumes LM Studio Windows 11 conversation files are accessible under the configured root directory at C:\Users\USERNAME\.lmstudio\conversations
+- The plugin assumes LM Studio Windows 11 conversation files are accessible under the configured root directory at `C:\Users\USERNAME\.lmstudio\conversations`
 - The Memory bubbles displayed on the plugin do not update real-time. Again another limitation of LM Studio not giving a way to send updated data upstream back to the plugin UI. The memory bubbles will update when the tool reinitializes, so when it's left idle for awhile then interacted with, or if you click the trashcan "reset" button. There are already validation checks in the backend to prevent any bugs, so don't worry about it. If you choose memories that aren't available, nothing will happen. If you add, remove, or delete memories that aren't active or exist, nothing will break. It'll just be a visual bug of the UI that will refresh upon it's next initialization.
 
 ## Why such a drastic change in the final release
 
-- Unfortunately when I thought the plugin was ready for release I noticed some glaring bugs. The biggest cause of this was LM Studio's random behavior to reinitialize the plugin whenever it wanted to and the memory seeds not reliably being cleansed. It was like LM Studio was fighting to constantly overwrite with a cached version. When the timing was perfect the changes finalized which was what I saw in my limited testing when the code functionality was small. When it wasn't perfect, which was most the time as the code grew, LM Studio kept overwriting the cleansed copy with a version it had in cache and reviving the memory seeds, which then would be a constant war between LM Studio and my code to remove/replant/remove/replant. After a break I decided I didn't want to continue with some patch job or keep tweaking knobs until it worked, and proceeded to redo the flow of the preprompmt processor, the artifacts used to wrap the memories, remove reliance on data states(plugin reinitialization caused loss of states), added a better way to associate the conversation file to the chat, be less reliant on history and favor the conversation file, and pin point the exact window to try and beat LM Studio's default behavior. With a fresh mind, I eventually found it, and it's a 2 seconds after the assistant has finished it's response. I integrated those new findings and requirements into the final version. The flow has drastically improved and the bugs I was able to find have been stomped out.
+- Unfortunately when I thought the plugin was ready for release I noticed some glaring bugs. The biggest cause of this was LM Studio's random behavior to reinitialize the plugin whenever it wanted to and the memory seeds not reliably being cleansed. It was like LM Studio was fighting to constantly overwrite with a cached version. When the timing was perfect the changes finalized which was what I saw in my limited testing when the code functionality was small. When it wasn't perfect, which was most the time as the code grew, LM Studio kept overwriting the cleansed copy with a version it had in cache and reviving the memory seeds, which then would be a constant war between LM Studio and my code to remove/replant/remove/replant. After a break I decided I didn't want to continue with some patch job or keep tweaking knobs until it worked, and proceeded to redo the flow of the prompt preprocessor, the artifacts used to wrap the memories, remove reliance on data states(plugin reinitialization caused loss of states), added a better way to associate the conversation file to the chat, be less reliant on history and favor the conversation file, and pin point the exact window to try and beat LM Studio's default behavior. With a fresh mind, I eventually found it, and it's a 2 seconds after the assistant has finished it's response. I integrated those new findings and requirements into the final version. The flow has drastically improved and the bugs I was able to find have been stomped out.
