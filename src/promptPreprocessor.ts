@@ -42,7 +42,7 @@ export async function promptPreprocessor(
     // Read History to see check for an InternalChatID
     if (internalChatID === "") {
         internalChatID = await promptProcessorScanHistoryForID(messages);
-        console.log("internalChatID",internalChatID)
+
         if (internalChatID !== "") {
             createNewInternalChatID = false;
         }

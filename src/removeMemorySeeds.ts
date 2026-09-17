@@ -1,6 +1,7 @@
 import { memoryStore } from "./memoryStore";
-import { join } from "node:path";
-import { writeFile, readFile } from "node:fs/promises";
+import { join, } from "node:path";
+import { writeFile, readFile, unlink, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { removeMemorySeedFromSelected, updateMemorySeedsSelected } from "./memorySession";
 import { setConfigSchematics } from "./config";
 
@@ -37,12 +38,41 @@ export async function removeMemorySeeds(
         const originalAssistantLastMessagedAt =
             conversation.assistantLastMessagedAt;
 
+        // This is will help regulate the timings of multiple polling plugins
+        // Needed to play with my context cleanup plugin
+        // If using with context-cleanup plugin, which already waits the 2000ms
+        // we dont need to wait 2000ms here
+        const lockFile = `${conversationFile}.lock`;
+
+        // Remove stale lock files older than 15 seconds
+        if (existsSync(lockFile)) {
+            try {
+                const lockStats = await stat(lockFile);
+
+                const lockAgeMs =
+                    Date.now() - lockStats.mtimeMs;
+
+                if (lockAgeMs > 15_000) {
+                    await unlink(lockFile);
+
+                    console.log(
+                        `Removed stale lock file: ${lockFile}`,
+                    );
+                }
+            } catch (error) {
+                console.error(
+                    "Error checking stale lock file:",
+                    error,
+                );
+            }
+        }
+
+        let lockWasPresent = false;
+
         // Initiated polling until assistantLastMessagedAt value changes
         // then initiate the conversation json overwrite
         const pollForAssistantUpdate = setInterval(async () => {
             try {
-                console.log("ran polling");
-
                 const latestJson = await readFile(
                     conversationFile,
                     "utf-8",
@@ -50,15 +80,18 @@ export async function removeMemorySeeds(
 
                 const latestConversation = JSON.parse(latestJson);
 
-                if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
+                const lockExists = existsSync(lockFile);
+                
+                if (lockExists) {
+                    lockWasPresent = true;
+                }
+
+                if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt && 
+                    lockExists === false
+                ) {
                     clearInterval(pollForAssistantUpdate);
                 
                     // This timeout is to circumvent LM Studio's behavior
-                    // Currently through test: User initiates seeds removal -> we snap shot conversation.json after the assistant finished responding -> remove the seeds
-                    // -> overwrite conversation.json -> LM Studio seems to be working on something invisible -> user types a new message -> LM Studio brings up old conversation with seeds
-                    // still present. If the overwrite is delayed by 2 seconds that gives enough time for LM Studio to finish whatever it's doing and lets us properly overwrites the
-                    // conversation.json. An unfortunate side effect is that if user starts typing before the 2 seconds elapses it will revive the uncleaned version.
-                    // But with the current logic it's self correcting and will clean up the seeds eventually during a future turn if the user leaves a 2 second window open.
                     setTimeout(async () => {
                         try {
                             const latestJson = await readFile(
@@ -105,7 +138,7 @@ export async function removeMemorySeeds(
                                 error,
                             );
                         }
-                    }, 2000);   // CANNOT BE LESS THAN 2000ms, if you go lower than this something LM Studio is doing on the backend is caching an older version with the seeds still present.
+                    }, lockWasPresent? 20 : 2000);   // CANNOT BE LESS THAN 2000ms, if you go lower than this something LM Studio is doing on the backend is caching an older version with the seeds still present.
                 }
             } catch (error) {
                 clearInterval(pollForAssistantUpdate);
@@ -115,7 +148,7 @@ export async function removeMemorySeeds(
                     error,
                 );
             }
-        }, 800);
+        }, lockWasPresent? 20 : 800);
 
         return validMemorySeedsSelected;
 
