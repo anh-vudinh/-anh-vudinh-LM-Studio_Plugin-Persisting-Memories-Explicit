@@ -101,7 +101,7 @@ Removing and deleting are two distinct actions. Remove means your intention is t
 
 ## Conversation Numbering
 
-<img src="chat-message-#.jpg" alt="Image of Chat Message">
+<img src="chat-message-N.jpg" alt="Image of Chat Message">
 
 While enabled the plugin will force the assistant to append a message # after each of it's responses.
 This numbering makes it easier for users to refer to a specific exchange when asking to save a memory.
