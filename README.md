@@ -31,9 +31,9 @@ The plugin keeps the available memory pool in memory, injects selected memories 
 
 ## Setup
 
-From Website: Install from the LM Studio Hub then enable the plugin.
+From LM Studio Website: Install from the LM Studio Hub then enable the plugin.
 
-From Terminal: Open powershell/terminal, navigate to root folder of the plugin you downloaded where you see the README, package, and manifest. Enter in `lms dev -i -y` . Plugin should now be available in LM Studio.
+From Github Source Code: Open powershell/terminal, navigate to root folder of the plugin you downloaded where you see the README, package, and manifest. Enter in `lms dev -i -y` . Plugin should now be available in LM Studio.
 
 Make sure the **`save_memory`** tool is enabled in the plugin's **Tools** section (this is mandatory — if it's off, the model can't use the plugin at all).
 
