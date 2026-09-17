@@ -5,9 +5,7 @@ import { associateAssistantResponse } from "./memoryAssociation";
 import { memoryStore } from "./memoryStore";
 import { configSchematics } from "./config";
 import { getMemorySeedsPool } from "./memorySession";
-import { readFile } from "node:fs/promises";
 import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
-import path from "node:path";
 
 export async function toolsProvider(
   ctl: ToolsProviderController
@@ -22,60 +20,6 @@ export async function toolsProvider(
 
     await deleteMemorySeedFile(normalizedMemoryFileToDelete);
     console.log("deleted ", normalizedMemoryFileToDelete)
-  }
-
-  /**
-   * ------------------------------------------------------------------------
-   * memory seed selection
-   * ------------------------------------------------------------------------
-   */
-  const memorySeedsSelected =
-    config.get("memorySeedsSelected") as string[];
-
-  const memorySeedsPool = getMemorySeedsPool();
-
-  const normalizedMemorySeedsSelected =
-      memorySeedsSelected.map(
-          (memorySeed) =>
-              memorySeed
-                  .trim()
-                  .replace(/\.json.*$/i, ".json"),
-      );
-
-  const validMemorySeedsSelected = [
-      ...new Set(
-          normalizedMemorySeedsSelected.filter(
-              (memorySeed) =>
-                  memorySeedsPool.includes(memorySeed),
-          ),
-      ),
-  ];
-
-  const memoriesDirectory = await memoryStore.getMemoriesDirectory();
-
-  const selectedMemorySeeds = [];
-
-  for (const memorySeed of validMemorySeedsSelected) {
-      const [category, filename] =
-          memorySeed.split("/");
-
-      const filePath = path.join(
-          memoriesDirectory,
-          category,
-          filename,
-      );
-
-      const contents = await readFile(
-          filePath,
-          "utf-8",
-      );
-
-      const seed = JSON.parse(contents);
-
-      selectedMemorySeeds.push({
-          memorySeed,
-          seed,
-      });
   }
 
    /**
