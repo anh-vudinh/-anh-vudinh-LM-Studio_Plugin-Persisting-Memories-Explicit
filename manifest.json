@@ -2,6 +2,6 @@
   "type": "plugin",
   "runner": "node",
   "owner": "anhuvdinh",
-  "name": "memory-seed",
+  "name": "persisting-memories",
   "revision": 1
 }

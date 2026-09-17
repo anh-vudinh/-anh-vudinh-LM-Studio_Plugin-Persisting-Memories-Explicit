@@ -1,6 +1,6 @@
-# Memory Seed Plugin
+# Persisting Memories Plugin
 
-Memory Seed Plugin is an LM Studio plugin that lets users preserve selected assistant responses as reusable memory seeds and inject those memories into future conversations. It stores memories as local JSON files, organizes them by category, and uses prompt preprocessing to add selected memories to the active prompt when needed.
+Persisting Memories Plugin is an LM Studio plugin that lets users preserve selected assistant responses as reusable memory seeds and inject those memories into future conversations. It stores memories as local JSON files, organizes them by category, and uses prompt preprocessing to add selected memories to the active prompt when needed.
 Tested working on Windows 11 Pro 25H2 - LM Studio 0.4.24
 
 ## Table of Contents
