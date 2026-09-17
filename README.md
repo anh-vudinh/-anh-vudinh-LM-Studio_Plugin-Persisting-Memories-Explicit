@@ -13,7 +13,7 @@ Tested working on Windows 11 Pro 25H2 - LM Studio 0.4.24
 - [Tools](#tools)
 - [Conversation Numbering](#conversation-numbering)
 - [Technical Details](#technical-details)
-- [Limitations and Notes](#limitations-and-notes)
+- [Limitations or Notes](#limitations-or-notes)
 - [Why such a drastic change in the final release](#why-such-a-drastic-change-in-the-final-release)
 
 ## Overview
@@ -53,7 +53,7 @@ If you forget the category or name the model should ask for it before running th
 
 <details>
 <summary>Click to expand image</summary>
-![Image of memory-seed-json](memory-seed-json.jpg)
+<img src="memory-seed-json.jpg" alt="Image of memory-seed-json">
 </details>
 
 ## How It Works
@@ -67,7 +67,7 @@ If you forget the category or name the model should ask for it before running th
 
 <details>
 <summary>Click to expand image</summary>
-![Image of Chat](chat_save_memory_example.jpg)
+<img src="chat_save_memory_example.jpg" alt="Image of Chat">
 </details>
 
 When the user see's a message they wish to keep as a memory, they can call on the save_memory tool by saying this to the assistant
@@ -79,7 +79,7 @@ When the user see's a message they wish to keep as a memory, they can call on th
 
 <details>
 <summary>Click to expand image</summary>
-![Image of plugin-delete-or-remove](plugin-control-panel-delete-or-remove-memory.jpg)
+<img src="plugin-control-panel-delete-or-remove-memory.jpg" alt="Image of plugin-delete-or-remove">
 </details>
 
 Removing and deleting are two distinct actions. Remove means your intention is to remove the memory from the current chat session's context. Deleting means to permanently discard the memory.
@@ -89,7 +89,7 @@ Removing and deleting are two distinct actions. Remove means your intention is t
 
 ## Configuration
 
-![Image of Plugin Control Panel](plugin-control-panel.jpg)
+<img src="plugin-control-panel.jpg" alt="Image of Plugin Control Panel">
 
 | Field | Purpose |
 | --- | --- |
@@ -101,7 +101,7 @@ Removing and deleting are two distinct actions. Remove means your intention is t
 
 ## Conversation Numbering
 
-![Image of Chat Message](chat-message-#.jpg)
+<img src="chat-message-#.jpg" alt="Image of Chat Message">
 
 While enabled the plugin will force the assistant to append a message # after each of it's responses.
 This numbering makes it easier for users to refer to a specific exchange when asking to save a memory.
