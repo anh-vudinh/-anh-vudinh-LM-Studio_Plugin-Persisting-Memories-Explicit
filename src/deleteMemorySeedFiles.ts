@@ -28,7 +28,7 @@ export async function deleteMemorySeedFile(
         try {
             await unlink(memoryFile);
             removeMemorySeedFromPool(normalizedMemorySeed);
-            setConfigSchematics({memorySeedsPool: getMemorySeedsPool()});
+            setConfigSchematics({memorySeedsPool: [...getMemorySeedsPool()]});
             
         } catch (error: any) {
             if (error.code === "ENOENT") {
