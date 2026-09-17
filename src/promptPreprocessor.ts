@@ -59,14 +59,14 @@ export async function promptPreprocessor(
         internalChatID = Date.now().toString();
     }
 
-    // Use the pre-exisiting InternalChatID found
+    // Use the pre-existing InternalChatID found
     // to find the matching conversation file
     conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText);
 
     // Read the user's currently selected memories from plugin
     // Note use memorySeedsSelected over getMemorySeedsSelected() <- which does not update real-time
     
-    // Cleaning up whitespaces only, not mispellings
+    // Cleaning up whitespaces only, not misspellings
     const normalizedMemorySeedsSelected =
         memorySeedsSelected.map(
             (memorySeed) =>
@@ -94,7 +94,7 @@ export async function promptPreprocessor(
     // Scan file first for injected seeds
     injectedMemorySeeds = await promptProcessorConversationFileScanForPreviousSeeds(conversationFileName, [...memorySeedsPool]);
 
-    // Deterimine only new memory seeds to inject
+    // Determine only new memory seeds to inject
     // This means new additions from config memorySeedsSelected
     const newMemorySeeds =
         validMemorySeedsSelected.filter(
@@ -586,7 +586,7 @@ async function promptProcessorRemoveSeeds(
                 ),
         );
     
-    // Second chceck to make sure there's actually something to remove
+    // Second check to make sure there's actually something to remove
     if(memorySeedsToRemove.length > 0) {
 
         injectedMemorySeeds = await removeMemorySeeds(conversationFileName, validMemorySeedsSelected, memorySeedsToRemove, cleanupAllSeeds);

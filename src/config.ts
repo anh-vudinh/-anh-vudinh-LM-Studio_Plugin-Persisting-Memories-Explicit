@@ -26,8 +26,8 @@ export function createConfig(
             "string",
             {
                 displayName: "Delete Memory",
-                subtitle: " *WARNING* This does not remove already injected memories. This is a final action to permenantly delete a memory.",
-                warning: "The selected memories will be permenantly deleted.",
+                subtitle: " *WARNING* This does not remove already injected memories. This is a final action to permanently delete a memory.",
+                warning: "The selected memories will be permanently deleted.",
                 placeholder: "Full name the memory to delete. Copy/paste from available memories.",
             },
             "",

@@ -131,7 +131,7 @@ async function memorySeedsCleanup(
     memorySeedsToRemove: string[],
 ): Promise<string[]> {
 
-    // User wants to remove memory seeds that were appended through the promptpreprocessor
+    // User wants to remove memory seeds that were appended through the prompt preprocessor
     // Make sure the preprocessed text exists
     for (const message of latestConversation.messages) {
 
