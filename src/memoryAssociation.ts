@@ -20,15 +20,6 @@ export interface MemoryAssociation {
 /**
  * Determine which earlier user message represents the original intention
  * associated with an approved assistant response.
- *
- * Important:
- *
- * The model is NOT asked whether the assistant response is correct.
- * The user already established that by selecting the response to remember.
- *
- * The model is only asked:
- *
- * "Which earlier user input is this response ultimately answering?"
  */
 export async function associateAssistantResponse(
     client: LMStudioClient,

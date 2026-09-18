@@ -18,7 +18,10 @@ let createNewInternalChatID: boolean;
 let cleanupAllSeeds: boolean;
 let internalChatID = "";
 const relationshipsLimit = 15;
-
+/**
+* https://github.com/anh-vudinh
+* Main function that directs the flow of the plugin
+*/
 export async function promptPreprocessor(
     ctl: PromptPreprocessorController,
     userMessage: ChatMessage,
@@ -63,9 +66,6 @@ export async function promptPreprocessor(
     // to find the matching conversation file
     conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText);
 
-    // Read the user's currently selected memories from plugin
-    // Note use memorySeedsSelected over getMemorySeedsSelected() <- which does not update real-time
-    
     // Cleaning up whitespaces only, not misspellings
     const normalizedMemorySeedsSelected =
         memorySeedsSelected.map(
@@ -121,16 +121,22 @@ export async function promptPreprocessor(
     
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
+
     if(memorySeedsSelected.length === 0 && areSeedsDetectedInHistory === true) {
+
         cleanupAllSeeds = true;
+
         await promptProcessorRemoveSeeds(conversationFileName, injectedMemorySeeds, validMemorySeedsSelected, cleanupAllSeeds);
+
         injectedMemorySeeds = [];
     }
 
     // Remove specific memory seeds the user no longer wants
     // after the model has finished responding
     if(memorySeedsSelected.length > 0) {
+
         cleanupAllSeeds = false;
+
         injectedMemorySeeds = await promptProcessorRemoveSeeds(conversationFileName, injectedMemorySeeds, validMemorySeedsSelected, cleanupAllSeeds);
     }
 
@@ -151,6 +157,14 @@ export async function promptPreprocessor(
     );
 }
 
+/**
+* Scan history for InternalChatID tag.
+* Cheaper than scanning the conversation file, if
+* The conversation file name is still unknown, or the
+* plugin reinitializes during an ongoing conversation.
+* Note: history will always be missing the newest user+assistant message,
+* so it's useless during the very first user message in chat.
+*/
 async function promptProcessorScanHistoryForID(
     messages: ChatMessage[],
 ): Promise<string> {
@@ -185,6 +199,19 @@ async function promptProcessorScanHistoryForID(
     return searchedInternalChatID;
 }
 
+/**
+* Scan conversation folder to link the real-time chat to
+* it's associated conversation file. This enables the user to
+* not have to manually make the link for the plugin.
+* Trade off: more resources expended for great ease of use
+* 1st scan is ideal, later scans are fallbacks, each has it's early ending.
+* 1st scan: cheap - check the relationship file for an exisiting relationship.
+* 2nd scan: scan each conversation file starting from newest to oldest until
+* we find the matching InternalChatID.
+* 3rd scan: fuzzy match user's latest input, check for the userInput text that matches what was
+* just typed into prompt preprocessor. Logically when this code is executed happens only when users
+* sent a fresh text through to the assistant, meaning it's the only real-time user input
+*/
 async function promptProcessorScanForConversationFile(
     internalChatID: string,
     userText: string,
@@ -320,7 +347,6 @@ async function promptProcessorScanForConversationFile(
         } catch {
             // Ignore malformed conversation files and continue scanning.
         }
-        
     }
 
     // Found the match, so add it as a relationship in
@@ -362,6 +388,11 @@ async function promptProcessorScanForConversationFile(
     return foundConversationFileName;
 }
 
+/**
+* Scan conversation file for past seeds injected. This allows users
+* to start the session with the correct injectedMemorySeeds + memorySeedsSelected state.
+* Trade off over using history scan: more resources expended for accuracy and reliability
+*/
 async function promptProcessorConversationFileScanForPreviousSeeds(
     conversationFileName: string,
     memorySeedsPool: string[],
@@ -413,6 +444,11 @@ async function promptProcessorConversationFileScanForPreviousSeeds(
     return foundPastInjectedMemorySeed;
 }
 
+/**
+* Shortcut to trigger a quick cleanup of all the memory seeds in conversation file
+* when user has removed all seeds in Memories to Inject.
+* Rather than the more expensive route of mathcing and removing seeds one by one.
+*/
 async function promptProcessorHistorySimpleScanForSeeds(
     messages: ChatMessage[],
 ): Promise<boolean> {
@@ -426,6 +462,9 @@ async function promptProcessorHistorySimpleScanForSeeds(
     return false;
 }
 
+/**
+* Constructor for the final memories text to feed into the prompt preprocessor
+*/
 async function promptProcessorConstructMemoriesToInject(
     newMemorySeeds: string[],
     memoriesDirectory: string,
@@ -570,6 +609,9 @@ async function promptProcessorConstructMemoriesToInject(
     return createdInjectedContext;
 }
 
+/**
+* Simple middleman to figure out which valid memories the user chose to remove
+*/
 async function promptProcessorRemoveSeeds(
     conversationFileName: string,
     injectedMemorySeeds: string[],
@@ -596,6 +638,11 @@ async function promptProcessorRemoveSeeds(
     return injectedMemorySeeds;
 }
 
+/**
+* Helper to gather all the conversation files and order them
+* from newest to oldest. The main function promptProcessorScanForConversationFile
+* will then start searching in that given order.
+*/
 async function findAllConversationFiles(
     conversationsDirectory: string,
 ): Promise<string[]> {

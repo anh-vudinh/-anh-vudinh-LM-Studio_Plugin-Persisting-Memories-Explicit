@@ -7,6 +7,10 @@ import { configSchematics } from "./config";
 import { getMemorySeedsPool } from "./memorySession";
 import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
 
+/**
+* ToolsProvider does not have much responsibility. Just to interpret when the user
+* requests to save a memory. The plugin's heavy lifting is in prompt preprocessor
+*/
 export async function toolsProvider(
   ctl: ToolsProviderController
 ): Promise<Tool[]> {
@@ -14,15 +18,22 @@ export async function toolsProvider(
   const config = ctl.getPluginConfig(configSchematics);
   const memoryFileToDelete = config.get("deleteMemorySeedsFile") as string;
   
+  /**
+  * Deletion logic is handled here because tools can get the real-time state
+  * of the deleteMemorySeedsFile config field.
+  * Prompt preprocessor would have only caught it after a message is sent.
+  */
   const normalizedMemoryFileToDelete = memoryFileToDelete.trim()
 
-  if (normalizedMemoryFileToDelete !== "" && getMemorySeedsPool().includes(normalizedMemoryFileToDelete)) {
+  if (normalizedMemoryFileToDelete !== "" && 
+      getMemorySeedsPool().includes(normalizedMemoryFileToDelete)
+  ) {
 
     await deleteMemorySeedFile(normalizedMemoryFileToDelete);
     console.log("deleted ", normalizedMemoryFileToDelete)
   }
 
-   /**
+  /**
    * ------------------------------------------------------------------------
    * saveMemoryTool
    * ------------------------------------------------------------------------
@@ -32,7 +43,7 @@ export async function toolsProvider(
 
     description:
       "Use when user says, save memory message <N>, messageNumber is set to <N>." +
-      "If user does not provide category and name, ask them for it." +
+      "If user does not provide category and name, ask the user for it." +
       "You must first know the category and name before calling this tool.",
 
     parameters: {

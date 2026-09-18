@@ -9,8 +9,8 @@ export async function deleteMemorySeedFile(
 ): Promise<string> {
 
     const normalizedMemorySeed = memorySeed
-    .trim()
-    .split(".json")[0] + ".json";
+        .trim()
+        .split(".json")[0] + ".json";
 
     const [category, filename] = normalizedMemorySeed.split("/");
 
@@ -32,10 +32,8 @@ export async function deleteMemorySeedFile(
             
         } catch (error: any) {
             if (error.code === "ENOENT") {
-                return `Error: Memory seed "${normalizedMemorySeed}" was not found.`;
+                console.error(`Error: Memory seed "${normalizedMemorySeed}" was not found.`);
             }
-
-            throw error;
         }
         
         // Check if folder is empty
@@ -54,17 +52,19 @@ export async function deleteMemorySeedFile(
                 await rmdir(categoryDirectory);
             } catch (error: any) {
                 if (error.code !== "EPERM" && error.code !== "ENOTEMPTY") {
-                    throw error;
+                    console.error(`Error: Category Directory "${categoryDirectory}" was not found.`);
                 }
             }
         }
+
         return `Memory seed "${normalizedMemorySeed}" deleted successfully.`;
 
     } catch (error: any) {
         if (error.code === "ENOENT") {
+            console.log(`Error: Memory seed "${normalizedMemorySeed}" was not found.`);
             return `Error: Memory seed "${normalizedMemorySeed}" was not found.`;
         }
-
-        throw error;
     }
+
+    return `Memory seed "${normalizedMemorySeed}" deleted successfully.`;
 }

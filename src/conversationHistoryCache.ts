@@ -2,11 +2,6 @@ import type { Chat } from "@lmstudio/sdk";
 
 /**
  * The currently active LM Studio conversation history.
- *
- * The prompt preprocessor updates this immediately before each generation.
- * Tools can then read the same conversation while the model is executing
- * a tool call during that generation.
- *
  * We deliberately keep this in memory only. The LM Studio conversation
  * itself remains the source of truth.
  */

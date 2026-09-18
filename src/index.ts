@@ -12,6 +12,11 @@ import {
     configSchematics,
 } from "./config";
 
+
+/**
+ * Populating the config starts here rather than
+ * the default of starting in config.ts
+ */
 export async function main(context: PluginContext) {
 
     // checking memories directory to populate initial memory seed pool

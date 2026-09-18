@@ -15,8 +15,7 @@ export function createConfig(
             "string",
             {
                 displayName: "Conversation File Name",
-                subtitle:
-                    "Required for memory removal. Digits only. The number associated with the conversation.json file for this chat session.",
+                subtitle: "Required for memory removal. Digits only. The number associated with the conversation.json file for this chat session.",
                 nonConfigurable: true,
             },
             conversationFileName,
@@ -27,7 +26,7 @@ export function createConfig(
             {
                 displayName: "Delete Memory",
                 subtitle: " *WARNING* This does not remove already injected memories. This is a final action to permanently delete a memory.",
-                warning: "The selected memories will be permanently deleted.",
+                warning: "This memory will be permanently deleted.",
                 placeholder: "Full name the memory to delete. Copy/paste from available memories.",
             },
             "",
@@ -37,8 +36,9 @@ export function createConfig(
             "stringArray",
             {
                 displayName: "Available Memories",
-                subtitle:
-                    "DISPLAY ONLY: Copy names from this list to the Selected Memories text field to use in the current session.",
+                subtitle: "DISPLAY ONLY: To create a new memory type to the assistant: save memory message #, category <cat_name>, name <file_name>",
+                hint: "Copy/paste full names to Memories to Inject or Delete Memory fields.",
+                allowEmptyStrings: false,
             },
             [...memorySeedsPool],
         )
@@ -48,8 +48,8 @@ export function createConfig(
             {
                 displayName: "Memories to Inject",
                 subtitle: "Injects a memory into context. Copy/paste from available memories.",
-                allowEmptyStrings: false,
                 warning: "Only the memories listed below will persist through turns.",
+                allowEmptyStrings: false,
             },
             [...memorySeedsSelected]
         )

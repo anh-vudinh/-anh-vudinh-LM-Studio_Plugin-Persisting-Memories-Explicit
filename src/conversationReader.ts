@@ -33,8 +33,6 @@ export interface AssistantResponse {
 
     /**
      * Visible assistant response.
-     *
-     * Internal thinking/reasoning is intentionally excluded.
      */
     content: string;
 
