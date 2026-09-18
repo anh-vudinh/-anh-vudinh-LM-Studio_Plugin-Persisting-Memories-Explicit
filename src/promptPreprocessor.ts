@@ -39,6 +39,7 @@ export async function promptPreprocessor(
     await setCurrentConversationHistory(history);
     const messages = (await getCurrentConversationHistory()).getMessagesArray();
     const userText = userMessage.getText();
+    const workingDirectory = ctl.getWorkingDirectory();
 
     // Assume values can be lost during future runs because of random plugin reinitialization
 
@@ -64,7 +65,7 @@ export async function promptPreprocessor(
 
     // Use the pre-existing InternalChatID found
     // to find the matching conversation file
-    conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText);
+    conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText, workingDirectory);
 
     // Cleaning up whitespaces only, not misspellings
     const normalizedMemorySeedsSelected =
@@ -144,7 +145,7 @@ export async function promptPreprocessor(
 
         return (
             `${userText}\n` +
-            `${createNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
+            `${createNewInternalChatID? `[ICID: ${internalChatID}] ` : ""}` +
             `${injectedContext}[END OF MEMORIES]\n` +
             `${numberingInstruction}`
         );
@@ -152,7 +153,7 @@ export async function promptPreprocessor(
 
     return (
         `${userText}\n` +
-        `${createNewInternalChatID? `[InternalChatID: ${internalChatID}] ` : ""}` +
+        `${createNewInternalChatID? `[ICID: ${internalChatID}] ` : ""}` +
         `${numberingInstruction}`
     );
 }
@@ -182,7 +183,7 @@ async function promptProcessorScanHistoryForID(
             }
 
             const match = content.text.match(
-                /\[InternalChatID:\s*(\d+)\]/
+                /\[ICID:\s*(\d+)\]/
             );
 
             if (match) {
@@ -206,15 +207,18 @@ async function promptProcessorScanHistoryForID(
 * Trade off: more resources expended for great ease of use
 * 1st scan is ideal, later scans are fallbacks, each has it's early ending.
 * 1st scan: cheap - check the relationship file for an exisiting relationship.
-* 2nd scan: scan each conversation file starting from newest to oldest until
+* 2nd scan: cheap - check the basename of workingdirectory, which usually matches the conversation file nam,e
+* reliability is uncertain but it's quick to see if the convo file is found and has the matching ICID
+* 3rd scan: expensive - scan each conversation file starting from newest to oldest until
 * we find the matching InternalChatID.
-* 3rd scan: fuzzy match user's latest input, check for the userInput text that matches what was
+* 4th scan: fuzzy match user's latest input, check for the userInput text that matches what was
 * just typed into prompt preprocessor. Logically when this code is executed happens only when users
 * sent a fresh text through to the assistant, meaning it's the only real-time user input
 */
 async function promptProcessorScanForConversationFile(
     internalChatID: string,
     userText: string,
+    workingDirectory: string,
 ): Promise<string> {
     const rootDirectory = await memoryStore.getRootDirectory();
     let relationships: any[] = [];
@@ -252,6 +256,7 @@ async function promptProcessorScanForConversationFile(
             relationship.internalChatID === internalChatID,
     );
 
+    // 1st SCAN:
     // STEP 1: If there is a current relationship check if the conversation file
     // still exist, if the file does not exist remove the entry
     if (existingRelationship) {
@@ -271,6 +276,7 @@ async function promptProcessorScanForConversationFile(
             foundConversationFileName = conversationFileName;
         } catch {
             // Conversation file no longer exists.
+            // Remove abandoned relationship
             relationships = relationships.filter(
                 (relationship) =>
                     relationship.internalChatID !== internalChatID,
@@ -292,7 +298,7 @@ async function promptProcessorScanForConversationFile(
             );
 
             const internalChatIDPattern = new RegExp(
-                `\\[InternalChatID:\\s*${internalChatID}\\]`,
+                `\\[ICID:\\s*${internalChatID}\\]`,
             );
 
             // STEP 2.1: If the ICID matches, conversation file found
@@ -303,16 +309,50 @@ async function promptProcessorScanForConversationFile(
         }
     }
 
-    // STEP 2.2: If the ICID doesn't match continue to scan in STEP 3.
+    // 2nd SCAN:
+    // STEP 3: Check if the basename of WD is a match for the conversation file
+    try {
+        const directoryBaseNameFromWD = basename(workingDirectory);
+    
+        const conversationFileName = `${directoryBaseNameFromWD}.conversation`;
 
-    // STEP 3: Perform a scan of each conversation file starting from the newest
+        const conversationFilePath = join(
+            conversationDirectory,
+            conversationFileName,
+        );
+
+        const conversationContent = await readFile(
+            conversationFilePath,
+            "utf-8",
+        );
+
+        const internalChatIDPattern = new RegExp(
+            `\\[ICID:\\s*${internalChatID}\\]`,
+        );
+
+        if (internalChatIDPattern.test(conversationContent)) {
+
+            return conversationFileName;
+        }
+
+    } catch (error: any) {
+
+        if (error?.code !== "ENOENT") {
+            console.error(error);
+        }
+
+        // Just move to next scan
+    }
+
+    // 3rd SCAN: with nested 4th SCAN
+    // STEP 4: Perform a scan of each conversation file starting from the newest
     // to search for the ICID because by now it should already exist
     const allConversationFiles = await findAllConversationFiles(conversationDirectory);
 
     let matchingConversationFile: string | null = null;
 
     const internalChatIDPattern = new RegExp(
-        `\\[InternalChatID:\\s*${internalChatID}\\]`,
+        `\\[ICID:\\s*${internalChatID}\\]`,
     );
 
     for (const conversationFile of allConversationFiles) {
@@ -327,6 +367,7 @@ async function promptProcessorScanForConversationFile(
             break;
         }
 
+        // 4th SCAN:
         // Fallback for brand-new conversations where the
         // InternalChatID has not yet been injected.
         try {
@@ -378,7 +419,7 @@ async function promptProcessorScanForConversationFile(
         foundConversationFileName = conversationFileName;
     }
 
-    // STEP 4: We now either have an already valid conversation file name
+    // STEP 5: We now either have an already valid conversation file name
     // from a confirmed existing conversation or we've found it through the scan
     // return the conversation file name and set config state
     setConfigSchematics({

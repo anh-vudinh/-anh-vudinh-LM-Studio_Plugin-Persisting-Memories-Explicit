@@ -110,7 +110,7 @@ This numbering makes it easier for users to refer to a specific exchange when as
 
 - A memories folder will be created at `C:\Users\USERNAME\.lmstudio`, and a `.json` file that retains the relationship between the chat session and its conversation file will be stored in `C:\Users\USERNAME\.lmstudio\conversations`.
 - Injection markers: memories will be injected within blocks of BEGIN and END markers containing the memory seed category/memory_name. These markers allow for later removal of the memory.
-- Internal chat ID: the preprocessor will append a one-time InternalChatID to mark the chat session. This marker helps to later identify the session and tie it to the corresponding conversation file.
+- Internal chat ID: the preprocessor will append a one-time InternalChatID [ICID] to mark the chat session. This marker helps to later identify the session and tie it to the corresponding conversation file.
 - Conversation mapping: the plugin stores a relationship file that maps internal chat IDs to conversation file names. It keeps only the newest twenty relationships.
 - Removal polling: when triggered memory removal, polls the conversation file every `800 ms` until the assistant finishes responding. Then it will remove the memories from the conversation after 2 seconds. These 2 seconds were mandatory otherwise LM Studio would just overwrite it again with some cached version prior to the removal of the memory seeds.
 - LM Studio also reinitializes the plugins whenever it decides too, so reliable long term storage of variables outside the scope is unreliable and just used temporarily. That includes storing current values in the config Schematics.

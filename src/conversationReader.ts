@@ -349,7 +349,7 @@ export function cleanAssistantResponse(text: string): string {
 export function cleanUserInput(text: string): string {
     return text
         .replace(
-            /\[InternalChatID:\s*\d+\]\s*/g,
+            /\[ICID:\s*\d+\]\s*/g,
             "",
         )
         .replace(
