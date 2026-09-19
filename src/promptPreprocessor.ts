@@ -43,12 +43,13 @@ export async function promptPreprocessor(
 
     // Assume values can be lost during future runs because of random plugin reinitialization
 
-    // Read History to see check for an InternalChatID
+    // Read History to check for an InternalChatID
     if (internalChatID === "") {
 
         internalChatID = await promptProcessorScanHistoryForID(messages);
 
         if (internalChatID !== "") {
+
             createNewInternalChatID = false;
         }
     }
@@ -108,7 +109,7 @@ export async function promptPreprocessor(
 
         injectedMemorySeeds = await promptProcessorConversationFileScanForPreviousSeeds(conversationFileName, [...memorySeedsPool]);
     }
-    
+
     // Determine only new memory seeds to inject
     // This means new additions from config memorySeedsSelected
     const newMemorySeeds =
@@ -133,7 +134,15 @@ export async function promptPreprocessor(
     // prerequisite to instructing to save memory
     const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
 
-    const numberingInstruction = `Format requirement: only this one time at the end of your response add **message ${assistantIndex}**.`;
+    // Remove number instruction during save memory request. Dumb assistants have shown
+    // to believe the format requirement is a second message save request
+    const isSaveMemoryRequest =
+    /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i
+        .test(userText);
+
+    const numberingInstruction = isSaveMemoryRequest
+        ? ""
+        : `Format requirement: limited to only this response, at the end of your response add **message ${assistantIndex}**.`;
     
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
