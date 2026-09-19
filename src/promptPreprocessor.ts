@@ -133,13 +133,25 @@ export async function promptPreprocessor(
 
     // Remove number instruction during save memory request. Dumb assistants have shown
     // to believe the format requirement is a second message save request
-    const isSaveMemoryRequest =
-    /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i
-        .test(userText);
+    let numberingInstruction = "";
 
-    const numberingInstruction = isSaveMemoryRequest
-        ? ""
-        : `Format requirement: for only this one of your response, add to the end **message ${assistantIndex}**.`;
+    const isSaveMemoryRequest =
+        /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i
+            .test(userText);
+    
+    // Append full numbering instruction only once if not done yet
+    if (await promptProcessorScanHistoryForNumberingInstruction(messages) === false) {
+
+        numberingInstruction = 
+            `Formatting Instruction: for every turn where a [ADD_MN_<##>] tag appears in the user's turn, append **message <##>** at the end of the assistant's response. `+
+            `:End of Instruction. For this turn only the tag is [ADD_MN_${assistantIndex}]`;
+
+    } else {
+
+        numberingInstruction = isSaveMemoryRequest
+            ? ""
+            : `[ADD_MN_${assistantIndex}]`;
+    }
     
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
@@ -229,6 +241,35 @@ async function promptProcessorScanHistoryForID(
     }
 
     return searchedInternalChatID;
+}
+
+/*
+* Note: history will always be missing the newest user+assistant message,
+* so it's useless during the very first user message in chat.
+*/
+async function promptProcessorScanHistoryForNumberingInstruction(
+    messages: ChatMessage[],
+): Promise<boolean> {
+
+    for (const message of messages) {
+
+        if ((message as any).data.role !== "user") {
+            continue;
+        }
+
+        for (const content of (message as any).data.content ?? []) {
+
+            if (content.type !== "text" || !content.text) {
+                continue;
+            }
+
+            if (/\[ADD_MN_\d+\]/.test(content.text)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 /**

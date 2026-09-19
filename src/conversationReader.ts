@@ -357,7 +357,11 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /Format requirement:.*?\*\*message \d+\*\*\.?/g,
+            /Formatting Instruction:.*?\[ADD_MN_\d+\].?/g,
+            "",
+        )
+        .replace(
+            /\[ADD_MN_\d+\]/,
             "",
         )
         .trim();
