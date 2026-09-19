@@ -38,13 +38,17 @@ export async function removeMemorySeeds(
         const originalAssistantLastMessagedAt =
             conversation.assistantLastMessagedAt;
 
-        // This is will help regulate the timings of multiple polling plugins
-        // Needed to play with my context cleanup plugin
+        // This will help regulate the timings of multiple polling plugins.
+        // Needed to play with my context cleanup plugin.
+        // https://github.com/anh-vudinh/LM-Studio_Context-Cleanup
         // If using with context-cleanup plugin, which already waits the 2000ms
-        // we dont need to wait 2000ms here
+        // we dont need to wait 2000ms here.
         const lockFile = `${conversationFile}.lock`;
 
-        // Remove stale lock files older than 15 seconds
+        // Remove stale lock files older than 10 seconds
+        // My context cleanup plugin is responsible for it's own removal
+        // but this is just a safety measure incase that plugin was unable to
+        // remove its lock file.
         if (existsSync(lockFile)) {
             try {
                 const lockStats = await stat(lockFile);
@@ -52,7 +56,7 @@ export async function removeMemorySeeds(
                 const lockAgeMs =
                     Date.now() - lockStats.mtimeMs;
 
-                if (lockAgeMs > 15_000) {
+                if (lockAgeMs > 10_000) {
                     await unlink(lockFile);
 
                     console.log(
@@ -138,7 +142,9 @@ export async function removeMemorySeeds(
                                 error,
                             );
                         }
-                    }, lockWasPresent? 20 : 2000);   // CANNOT BE LESS THAN 2000ms, if you go lower than this something LM Studio is doing on the backend is caching an older version with the seeds still present.
+                    }, lockWasPresent? 20 : 2000);  
+                    // CANNOT BE LESS THAN 2000ms, if you go lower than this something LM Studio is doing on the backend is caching an older version with the seeds still present.
+                    // The ternary allows for shortening if the context-cleanup plugin waited the 2000ms already.
                 }
             } catch (error) {
                 clearInterval(pollForAssistantUpdate);

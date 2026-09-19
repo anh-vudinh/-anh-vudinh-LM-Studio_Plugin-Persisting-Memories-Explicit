@@ -14,7 +14,6 @@ import type {
 } from "@lmstudio/sdk";
 
 let injectedMemorySeeds: string[] | null = null;
-let createNewInternalChatID: boolean;
 let cleanupAllSeeds: boolean;
 let internalChatID = "";
 const relationshipsLimit = 15;
@@ -40,6 +39,7 @@ export async function promptPreprocessor(
     const messages = (await getCurrentConversationHistory()).getMessagesArray();
     const userText = userMessage.getText();
     const workingDirectory = ctl.getWorkingDirectory();
+    let createNewInternalChatID = false;
 
     // Assume values can be lost during future runs because of random plugin reinitialization
 
@@ -47,11 +47,6 @@ export async function promptPreprocessor(
     if (internalChatID === "") {
 
         internalChatID = await promptProcessorScanHistoryForID(messages);
-
-        if (internalChatID !== "") {
-
-            createNewInternalChatID = false;
-        }
     }
 
     // First check of History for InternalChatID returned nothing
@@ -59,20 +54,19 @@ export async function promptPreprocessor(
     if (internalChatID ===  "") {
 
         createNewInternalChatID = true;
-    }
-    
-    // Assign an InternalChatID
-    if (createNewInternalChatID === true) {
-
         internalChatID = Date.now().toString();
     }
-
+    
     // Use the pre-existing InternalChatID found
     // to find the matching conversation file
     // Skip if we already know the conversation file
     if (conversationFileName === "") {
 
-        conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText, workingDirectory);
+        conversationFileName = await promptProcessorScanForConversationFile(
+            internalChatID, 
+            userText, 
+            workingDirectory
+        );
     }
     
     // Cleaning up whitespaces only, not misspellings
@@ -102,6 +96,9 @@ export async function promptPreprocessor(
 
     // Scan file first for injected seeds
     // Check on first initialzation, and skip checks later if nothing changed
+    // Still works if plugin randomly reinitializes, IMS will be set to null again. 
+    // So the current states either
+    // matches, doesn't match, or was reset by random initialization.
     if (
         injectedMemorySeeds === null ||
         !areStringArraysEqualAsSets(injectedMemorySeeds, validMemorySeedsSelected)
@@ -142,7 +139,7 @@ export async function promptPreprocessor(
 
     const numberingInstruction = isSaveMemoryRequest
         ? ""
-        : `Format requirement: limited to only this response, at the end of your response add **message ${assistantIndex}**.`;
+        : `Format requirement: for only this one of your response, add to the end **message ${assistantIndex}**.`;
     
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
@@ -151,7 +148,12 @@ export async function promptPreprocessor(
 
         cleanupAllSeeds = true;
 
-        await promptProcessorRemoveSeeds(conversationFileName, injectedMemorySeeds, validMemorySeedsSelected, cleanupAllSeeds);
+        await promptProcessorRemoveSeeds(
+            conversationFileName, 
+            injectedMemorySeeds, 
+            validMemorySeedsSelected, 
+            cleanupAllSeeds
+        );
 
         injectedMemorySeeds = [];
     }
@@ -162,7 +164,12 @@ export async function promptPreprocessor(
 
         cleanupAllSeeds = false;
 
-        injectedMemorySeeds = await promptProcessorRemoveSeeds(conversationFileName, injectedMemorySeeds, validMemorySeedsSelected, cleanupAllSeeds);
+        injectedMemorySeeds = await promptProcessorRemoveSeeds(
+            conversationFileName, 
+            injectedMemorySeeds, 
+            validMemorySeedsSelected, 
+            cleanupAllSeeds
+        );
     }
 
     if (injectedContext) {

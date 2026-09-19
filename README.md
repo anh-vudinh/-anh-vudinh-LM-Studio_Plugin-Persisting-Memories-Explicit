@@ -110,11 +110,11 @@ This numbering makes it easier for users to refer to a specific exchange when as
 
 - A memories folder will be created at `C:\Users\USERNAME\.lmstudio`, and a `.json` file that retains the relationship between the chat session and its conversation file will be stored in `C:\Users\USERNAME\.lmstudio\conversations`.
 - Injection markers: memories will be injected within blocks of BEGIN and END markers containing the memory seed category/memory_name. These markers allow for later removal of the memory.
-- Internal chat ID: the preprocessor will append a one-time InternalChatID [ICID] to mark the chat session. This marker helps to later identify the session and tie it to the corresponding conversation file.
-- Conversation mapping: the plugin stores a relationship file that maps internal chat IDs to conversation file names. It keeps only the newest twenty relationships.
+- Internal chat ID: the preprocessor will append a one-time InternalChatID [ICID] to mark the chat session. This marker helps to later identify the session and tie it to the corresponding conversation file. Some dumb overcautious models will think the tag is a jailbreak attempt to manipulate their behavior.
+- Conversation mapping: the plugin stores a relationship file that maps internal chat IDs to conversation file names. It keeps only the newest 15 relationships.
 - Removal polling: when triggered memory removal, polls the conversation file every `800 ms` until the assistant finishes responding. Then it will remove the memories from the conversation after 2 seconds. These 2 seconds were mandatory otherwise LM Studio would just overwrite it again with some cached version prior to the removal of the memory seeds.
 - LM Studio also reinitializes the plugins whenever it decides too, so reliable long term storage of variables outside the scope is unreliable and just used temporarily. That includes storing current values in the config Schematics.
-- Path safety: memory names are normalized, but not to correct misspellings. It is easiest to copy and paste the memory name from the list displayed in Available Memories into the text field of Selected Memories.
+- Path safety: memory names are normalized, but not to correct misspellings. It is easiest to copy and paste the memory name from the list displayed in Available Memories into the text field of Memories to Inject.
 - In-memory pool: the available memory pool is kept in memory and updated when files are deleted. Plugin UI updates may be delayed because of LM Studio plugin behavior, but on the backend these values are properly updated.
 
 ## Limitations or Notes
