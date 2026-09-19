@@ -45,6 +45,7 @@ export async function promptPreprocessor(
 
     // Read History to see check for an InternalChatID
     if (internalChatID === "") {
+
         internalChatID = await promptProcessorScanHistoryForID(messages);
 
         if (internalChatID !== "") {
@@ -55,18 +56,24 @@ export async function promptPreprocessor(
     // First check of History for InternalChatID returned nothing
     // So we must create one
     if (internalChatID ===  "") {
+
         createNewInternalChatID = true;
     }
     
     // Assign an InternalChatID
     if (createNewInternalChatID === true) {
+
         internalChatID = Date.now().toString();
     }
 
     // Use the pre-existing InternalChatID found
     // to find the matching conversation file
-    conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText, workingDirectory);
+    // Skip if we already know the conversation file
+    if (conversationFileName === "") {
 
+        conversationFileName = await promptProcessorScanForConversationFile(internalChatID, userText, workingDirectory);
+    }
+    
     // Cleaning up whitespaces only, not misspellings
     const normalizedMemorySeedsSelected =
         memorySeedsSelected.map(
@@ -93,8 +100,15 @@ export async function promptPreprocessor(
     ];
 
     // Scan file first for injected seeds
-    injectedMemorySeeds = await promptProcessorConversationFileScanForPreviousSeeds(conversationFileName, [...memorySeedsPool]);
+    // Check on first initialzation, and skip checks later if nothing changed
+    if (
+        injectedMemorySeeds === null ||
+        !areStringArraysEqualAsSets(injectedMemorySeeds, validMemorySeedsSelected)
+    ) {
 
+        injectedMemorySeeds = await promptProcessorConversationFileScanForPreviousSeeds(conversationFileName, [...memorySeedsPool]);
+    }
+    
     // Determine only new memory seeds to inject
     // This means new additions from config memorySeedsSelected
     const newMemorySeeds =
@@ -118,7 +132,8 @@ export async function promptPreprocessor(
     // Model appends message # at the end of the it's response
     // prerequisite to instructing to save memory
     const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
-    const numberingInstruction = `Format requirement: at the end of your response add ***message ${assistantIndex}***.`;
+
+    const numberingInstruction = `Format requirement: only this one time at the end of your response add **message ${assistantIndex}**.`;
     
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
@@ -144,16 +159,16 @@ export async function promptPreprocessor(
     if (injectedContext) {
 
         return (
-            `${userText}\n` +
-            `${createNewInternalChatID? `[ICID: ${internalChatID}] ` : ""}` +
+            `${userText}.\n` +
+            `${createNewInternalChatID? `[ICID: ${internalChatID}] . ` : ""}` +
             `${injectedContext}[END OF MEMORIES]\n` +
             `${numberingInstruction}`
         );
     }
 
     return (
-        `${userText}\n` +
-        `${createNewInternalChatID? `[ICID: ${internalChatID}] ` : ""}` +
+        `${userText}.\n` +
+        `${createNewInternalChatID? `[ICID: ${internalChatID}] . ` : ""}` +
         `${numberingInstruction}`
     );
 }
@@ -207,7 +222,7 @@ async function promptProcessorScanHistoryForID(
 * Trade off: more resources expended for great ease of use
 * 1st scan is ideal, later scans are fallbacks, each has it's early ending.
 * 1st scan: cheap - check the relationship file for an exisiting relationship.
-* 2nd scan: cheap - check the basename of workingdirectory, which usually matches the conversation file nam,e
+* 2nd scan: cheap - check the basename of workingdirectory, which usually matches the conversation file name,
 * reliability is uncertain but it's quick to see if the convo file is found and has the matching ICID
 * 3rd scan: expensive - scan each conversation file starting from newest to oldest until
 * we find the matching InternalChatID.
@@ -248,20 +263,19 @@ async function promptProcessorScanForConversationFile(
         // File doesn't exist yet, so we'll create it in a later step.
     }
 
-    // We've already found or assigned an InternalChatID
-    // Take the ICID check if there is an existing relationship
-    // in the relationship json.
+    // We've already found or assigned an InternalChatID.
+    // Check if there is an existing relationship in the relationship JSON.
     const existingRelationship = relationships.find(
         (relationship) =>
             relationship.internalChatID === internalChatID,
     );
 
     // 1st SCAN:
-    // STEP 1: If there is a current relationship check if the conversation file
-    // still exist, if the file does not exist remove the entry
+    // STEP 1: If there is a current relationship, check if the
+    // conversation file still exists. If the file does not exist,
+    // remove the abandoned relationship.
     if (existingRelationship) {
 
-        // Retrieve the full conversation file name.
         const conversationFileName = existingRelationship.conversationFile;
 
         const conversationFilePath = join(
@@ -274,9 +288,10 @@ async function promptProcessorScanForConversationFile(
 
             // File exists
             foundConversationFileName = conversationFileName;
+
         } catch {
             // Conversation file no longer exists.
-            // Remove abandoned relationship
+            // Remove abandoned relationship.
             relationships = relationships.filter(
                 (relationship) =>
                     relationship.internalChatID !== internalChatID,
@@ -289,7 +304,8 @@ async function promptProcessorScanForConversationFile(
             );
         }
 
-        // STEP 2: If the conversation file still exist, open it to confirm for ICID
+        // STEP 2:
+        // If the conversation file still exists, open it to confirm ICID.
         if (foundConversationFileName !== "") {
 
             const conversationContent = await readFile(
@@ -301,105 +317,146 @@ async function promptProcessorScanForConversationFile(
                 `\\[ICID:\\s*${internalChatID}\\]`,
             );
 
-            // STEP 2.1: If the ICID matches, conversation file found
-            if (internalChatIDPattern.test(conversationContent)) {
+            const icidMatches = internalChatIDPattern.test(conversationContent);
 
+            // STEP 2.1:
+            // Existing relationship is valid, so return immediately.
+            if (icidMatches) {
+                setConfigSchematics({conversationFileName: foundConversationFileName});
                 return foundConversationFileName;
             }
+
+            // Existing relationship is invalid.
+            // Clear it and continue with the remaining scans.
+            foundConversationFileName = "";
         }
     }
 
     // 2nd SCAN:
-    // STEP 3: Check if the basename of WD is a match for the conversation file
-    try {
-        const directoryBaseNameFromWD = basename(workingDirectory);
-    
-        const conversationFileName = `${directoryBaseNameFromWD}.conversation`;
+    // STEP 3: Check if the basename of WD is a match for the conversation file.
+    if (foundConversationFileName === "") {
+        try {
+            const directoryBaseNameFromWD = basename(workingDirectory);
 
-        const conversationFilePath = join(
-            conversationDirectory,
-            conversationFileName,
-        );
+            const conversationFileName = `${directoryBaseNameFromWD}.conversation.json`;
 
-        const conversationContent = await readFile(
-            conversationFilePath,
-            "utf-8",
-        );
+            const conversationFilePath = join(
+                conversationDirectory,
+                conversationFileName,
+            );
+
+            const conversationContent = await readFile(
+                conversationFilePath,
+                "utf-8",
+            );
+
+            const internalChatIDPattern = new RegExp(
+                `\\[ICID:\\s*${internalChatID}\\]`,
+            );
+
+            // First check for the ICID.
+            if (internalChatIDPattern.test(conversationContent)) {
+                foundConversationFileName = conversationFileName;
+            }
+
+            // If ICID did not match, check clientInput.
+            if (foundConversationFileName === "") {
+                try {
+                    const conversation = JSON.parse(conversationContent);
+
+                    const clientInput = conversation.clientInput?.trim() ?? "";
+
+                    const input = userText.trim();
+
+                    if (
+                        clientInput.length > 0 &&
+                        input.startsWith(clientInput)
+                    ) {
+                        foundConversationFileName = conversationFileName;
+                    }
+
+                } catch {
+                    // Ignore malformed conversation content
+                    // and continue to the next scan.
+                }
+            }
+
+        } catch (error: any) {
+
+            if (error?.code !== "ENOENT") {
+                console.error(error);
+            }
+
+            // Just move to next scan.
+        }
+    }
+
+    // 3rd SCAN:
+    // STEP 4: Scan each conversation file starting from the newest.
+    //
+    // Only perform this scan if STEP 3 did not find a match.
+    if (foundConversationFileName === "") {
+
+        const allConversationFiles = await findAllConversationFiles(conversationDirectory);
 
         const internalChatIDPattern = new RegExp(
             `\\[ICID:\\s*${internalChatID}\\]`,
         );
 
-        if (internalChatIDPattern.test(conversationContent)) {
+        for (const conversationFile of allConversationFiles) {
 
-            return conversationFileName;
-        }
-
-    } catch (error: any) {
-
-        if (error?.code !== "ENOENT") {
-            console.error(error);
-        }
-
-        // Just move to next scan
-    }
-
-    // 3rd SCAN: with nested 4th SCAN
-    // STEP 4: Perform a scan of each conversation file starting from the newest
-    // to search for the ICID because by now it should already exist
-    const allConversationFiles = await findAllConversationFiles(conversationDirectory);
-
-    let matchingConversationFile: string | null = null;
-
-    const internalChatIDPattern = new RegExp(
-        `\\[ICID:\\s*${internalChatID}\\]`,
-    );
-
-    for (const conversationFile of allConversationFiles) {
-        const conversationContent = await readFile(
-            conversationFile,
-            "utf-8",
-        );
-
-        // First try to match the InternalChatID.
-        if (internalChatIDPattern.test(conversationContent)) {
-            matchingConversationFile = conversationFile;
-            break;
-        }
-
-        // 4th SCAN:
-        // Fallback for brand-new conversations where the
-        // InternalChatID has not yet been injected.
-        try {
-            const conversation = JSON.parse(
-                conversationContent,
+            const conversationContent = await readFile(
+                conversationFile,
+                "utf-8",
             );
 
-            const clientInput = conversation.clientInput?.trim() ?? "";
-            const input = userText.trim();
+            // First try to match the InternalChatID.
+            if (internalChatIDPattern.test(conversationContent)) {
+                foundConversationFileName = basename(conversationFile);
 
-            if (
-                clientInput.length > 0 &&
-                input.startsWith(clientInput)
-            ) {
-                matchingConversationFile = conversationFile;
                 break;
             }
-        } catch {
-            // Ignore malformed conversation files and continue scanning.
+
+            // 4th SCAN:
+            // Fallback for brand-new conversations where the
+            // InternalChatID has not yet been injected.
+            try {
+                const conversation = JSON.parse(conversationContent);
+
+                const clientInput = conversation.clientInput?.trim() ?? "";
+
+                const input = userText.trim();
+
+                if (
+                    clientInput.length > 0 &&
+                    input.startsWith(clientInput)
+                ) {
+                    foundConversationFileName = basename(conversationFile);
+
+                    break;
+                }
+
+            } catch {
+                // Ignore malformed conversation files and continue scanning.
+            }
         }
     }
 
-    // Found the match, so add it as a relationship in
-    // ChatSessionConversationRelationship.json.
-    if (matchingConversationFile !== null) {
-        const conversationFileName = basename(
-            matchingConversationFile,
+    // FINAL STEP:
+    // If we found a conversation file through STEP 3 or STEP 4,
+    // create/update the relationship in ChatSessionConversationRelationship.json.
+    if (foundConversationFileName !== "") {
+
+        // Remove any existing relationship for this InternalChatID
+        // before creating the new association.
+        relationships = relationships.filter(
+            (relationship) =>
+                relationship.internalChatID !== internalChatID,
         );
 
         const relationshipData = {
             internalChatID,
-            conversationFile: conversationFileName,
+            conversationFile: foundConversationFileName,
         };
 
         relationships.push(relationshipData);
@@ -415,16 +472,10 @@ async function promptProcessorScanForConversationFile(
             JSON.stringify(relationships, null, 2),
             "utf-8",
         );
-
-        foundConversationFileName = conversationFileName;
     }
 
-    // STEP 5: We now either have an already valid conversation file name
-    // from a confirmed existing conversation or we've found it through the scan
-    // return the conversation file name and set config state
-    setConfigSchematics({
-        conversationFileName: foundConversationFileName
-    });
+    // Set config state after scanning and relationship persistence.
+    setConfigSchematics({conversationFileName: foundConversationFileName});
 
     return foundConversationFileName;
 }
@@ -453,34 +504,41 @@ async function promptProcessorConversationFileScanForPreviousSeeds(
 
     let foundPastInjectedMemorySeed: string[] = [];
 
-    const conversationContent = await readFile(
-        conversationFilePath,
-        "utf-8",
-    );
+    try {
+        const conversationContent = await readFile(
+            conversationFilePath,
+            "utf-8",
+        );
 
-    const matches = conversationContent.matchAll(
-        /\[BEGIN ([^\]]+)\]/g,
-    );
+        const matches = conversationContent.matchAll(
+            /\[BEGIN ([^\]]+)\]/g,
+        );
 
-    for (const match of matches) {
-        const memorySeed = match[1].trim();
+        for (const match of matches) {
+            const memorySeed = match[1].trim();
 
-        // Only track memory seeds found in the conversation
-        // that exist in the current memory pool.
-        if (
-            memorySeedsPool.includes(memorySeed) &&
-            // Avoid tracking the same memory seed more than once.
-            !foundPastInjectedMemorySeed.includes(memorySeed)
-        ) {
-            foundPastInjectedMemorySeed.push(memorySeed);
+            // Only track memory seeds found in the conversation
+            // that exist in the current memory pool.
+            if (
+                memorySeedsPool.includes(memorySeed) &&
+                // Avoid tracking the same memory seed more than once.
+                !foundPastInjectedMemorySeed.includes(memorySeed)
+            ) {
+                foundPastInjectedMemorySeed.push(memorySeed);
+            }
         }
+
+        updateMemorySeedsSelected(foundPastInjectedMemorySeed);
+
+        setConfigSchematics({
+            memorySeedsSelected: foundPastInjectedMemorySeed,
+        });
+
+        return foundPastInjectedMemorySeed;
+
+    } catch (error: any) {
+        console.error(`promptProcessorConversationFileScanForPreviousSeeds error: ${error}`)
     }
-
-    updateMemorySeedsSelected(foundPastInjectedMemorySeed);
-
-    setConfigSchematics({
-        memorySeedsSelected: foundPastInjectedMemorySeed,
-    });
 
     return foundPastInjectedMemorySeed;
 }
@@ -680,7 +738,24 @@ async function promptProcessorRemoveSeeds(
 }
 
 /**
-* Helper to gather all the conversation files and order them
+* Helpers
+*/
+function areStringArraysEqualAsSets(
+    a: string[],
+    b: string[],
+): boolean {
+    const aSet = new Set(a);
+    const bSet = new Set(b);
+
+    if (aSet.size !== bSet.size) {
+        return false;
+    }
+
+    return [...aSet].every((value) => bSet.has(value));
+}
+
+/**
+* Gather all the conversation files and order them
 * from newest to oldest. The main function promptProcessorScanForConversationFile
 * will then start searching in that given order.
 */
@@ -744,3 +819,4 @@ async function findAllConversationFiles(
         (file) => file.filePath,
     );
 }
+

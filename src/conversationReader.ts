@@ -339,7 +339,7 @@ export function cleanAssistantResponse(text: string): string {
     }
 
     cleaned = cleaned.replace(
-        /\n+\*\*\*message \d+\*\*\*\s*$/,
+        /\n+\*\*message \d+\*\*\s*$/,
         "",
     );
 
@@ -349,7 +349,7 @@ export function cleanAssistantResponse(text: string): string {
 export function cleanUserInput(text: string): string {
     return text
         .replace(
-            /\[ICID:\s*\d+\]\s*/g,
+            /\[ICID:\s*\d+\](?:\s+\.?)?\s*/g,
             "",
         )
         .replace(
@@ -357,7 +357,7 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /Format requirement:.*?\*\*\*message \d+\*\*\*\.?/g,
+            /Format requirement:.*?\*\*message \d+\*\*\.?/g,
             "",
         )
         .trim();
