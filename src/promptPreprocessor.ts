@@ -1030,9 +1030,14 @@ async function scanForConversationFileThruBaseNameOfWorkingDirectory(
             try {
                 const conversation = JSON.parse(conversationContent);
 
-                const clientInput = conversation.clientInput?.trim() ?? "";
+                const normalize = (s: string): string =>
+                    (s ?? "")
+                        .toLowerCase()
+                        .trim()
+                        .replace(/\s+/g, " ");
 
-                const input = userText.trim();
+                const clientInput = normalize(conversation.clientInput);
+                const input = normalize(userText);
 
                 if (
                     clientInput.length > 0 &&
@@ -1135,9 +1140,14 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
         try {
             const conversation = JSON.parse(conversationContent);
 
-            const clientInput = conversation.clientInput?.trim() ?? "";
+            const normalize = (s: string): string =>
+                (s ?? "")
+                    .toLowerCase()
+                    .trim()
+                    .replace(/\s+/g, " ");
 
-            const input = userText.trim();
+            const clientInput = normalize(conversation.clientInput);
+            const input = normalize(userText);
 
             if (
                 clientInput.length > 0 &&
