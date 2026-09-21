@@ -35,16 +35,17 @@ export async function toolsProvider(
 
   /**
    * ------------------------------------------------------------------------
-   * saveMemoryTool
+   * persistingMemoriesTool
    * ------------------------------------------------------------------------
    */
-  const saveMemoryTool = tool({
-    name: "save_memory",
+  const persistingMemoriesTool = tool({
+    name: "persist_seed",
 
     description:
-      "Use when user says, save memory message <N>, messageNumber is set to <N>." +
-      "If user does not provide category and name, ask the user for it." +
-      "You must first know the category and name before calling this tool.",
+      "Use when user says, `save memory message <N>`, messageNumber is set to <N>." +
+      "User must have said `save memory` to use this tool." +
+      "Only allowed to call this tool once per turn. No repeated calls and stop at first failure." +
+      "If user must first provide the category and name before the assistant can call this tool.",
 
     parameters: {
       messageNumber: z
@@ -140,7 +141,7 @@ export async function toolsProvider(
     },
   });
 
-  tools.push(saveMemoryTool);
+  tools.push(persistingMemoriesTool);
 
   return tools;
 }

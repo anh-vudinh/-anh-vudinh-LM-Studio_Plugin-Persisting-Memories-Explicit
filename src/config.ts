@@ -37,7 +37,7 @@ export function createConfig(
             "stringArray",
             {
                 displayName: "Available Memories",
-                subtitle: "DISPLAY ONLY: To create a new memory type to the assistant: save memory message #, category <cat_name>, name <file_name>",
+                subtitle: "DISPLAY ONLY: To create a new memory type to the assistant: save memory message #; category <cat_name>; name <file_name>",
                 hint: "Copy/paste full names to Memories to Inject or Delete Memory fields.",
                 allowEmptyStrings: false,
             },
