@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
 import { memoryStore } from "./memoryStore";
-import { configSchematics, getSaveMemoryNumber } from "./config";
+import { configSchematics, getSaveMemoryNumber, setSaveMemoryNumber } from "./config";
 import { getMemorySeedsPool } from "./memorySession";
 import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
 
@@ -71,6 +71,13 @@ export async function toolsProvider(
       { signal }
     ) => {
       try {
+
+        const saveMemoryNumber = getSaveMemoryNumber();
+
+        if (saveMemoryNumber === null) {
+            throw new InvalidSaveMemoryNumberError();
+        }
+
         if (!params.category) {
           return (
             "Tell me which category/folder name to use."
@@ -93,12 +100,12 @@ export async function toolsProvider(
           return "Memory Seed operation was aborted.";
         }
 
-        const saveMemoryNumber = getSaveMemoryNumber();
+        const validSaveMemoryNumber = saveMemoryNumber;
 
         const association = await associateAssistantResponse(
           ctl.client,
           history,
-          saveMemoryNumber,
+          validSaveMemoryNumber,
         );
 
         await memoryStore.saveSeed(
@@ -117,11 +124,15 @@ export async function toolsProvider(
         }
 
         return (
-          `Memory Seed" ${params.category}/${params.name}" of msg ${saveMemoryNumber} has been saved.`
+          `Memory Seed" ${params.category}/${params.name}" of msg ${validSaveMemoryNumber} has been saved.`
         );
       } catch (error) {
+        if (error instanceof InvalidSaveMemoryNumberError) {
+            throw error;
+        }
+
         if (error instanceof Error && error.name === "AbortError") {
-          return "Memory Seed operation was aborted.";
+            return "Memory Seed operation was aborted.";
         }
 
         return (
@@ -135,4 +146,11 @@ export async function toolsProvider(
   tools.push(persistingMemoriesTool);
 
   return tools;
+}
+
+class InvalidSaveMemoryNumberError extends Error {
+    constructor() {
+        super("The msg number provided is invalid.");
+        this.name = "InvalidSaveMemoryNumberError";
+    }
 }

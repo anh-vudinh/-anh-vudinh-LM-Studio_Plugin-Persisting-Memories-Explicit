@@ -93,10 +93,10 @@ export function setConfigSchematics({
 }
 
 
-export function setSaveMemoryNumber(value: number): void {
+export function setSaveMemoryNumber(value: number | null): void {
     saveMemoryNumber = value;
 }
 
-export function getSaveMemoryNumber(): number {
-    return saveMemoryNumber!;
+export function getSaveMemoryNumber(): number | null {
+    return saveMemoryNumber;
 }

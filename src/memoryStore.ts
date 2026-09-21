@@ -1,4 +1,4 @@
-import { setConfigSchematics } from "./config";
+import { setConfigSchematics, setSaveMemoryNumber, getSaveMemoryNumber } from "./config";
 import { getMemorySeedsPool } from "./memorySession";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -137,6 +137,11 @@ export class MemoryStore {
 
         const safeCategory = sanitizePathPart(category);
         const safeName = sanitizeFilename(name);
+        const saveMemoryNumber = getSaveMemoryNumber();
+
+        if(saveMemoryNumber === null) {
+            throw new Error("Memory save message number is invalid.");
+        }
 
         if (!safeCategory) {
             throw new Error("Memory category cannot be empty.");
@@ -220,6 +225,9 @@ export class MemoryStore {
                 ],
             });
         }
+
+        // resets the saveMemoryNumber to it's default
+        setSaveMemoryNumber(null);
     }
 
     /**

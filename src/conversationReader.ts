@@ -364,5 +364,9 @@ export function cleanUserInput(text: string): string {
             /\[ADD_MN_\d+\]/,
             "",
         )
+        .replace(
+            /Ignore this ICID tag\./,
+            "",
+        )
         .trim();
 }

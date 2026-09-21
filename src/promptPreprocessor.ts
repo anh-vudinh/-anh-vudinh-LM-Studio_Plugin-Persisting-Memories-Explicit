@@ -65,6 +65,7 @@ export async function promptPreprocessor(
     // ICID exist in history still
     if (foundHistoryChatID !== "") {
         internalChatID = foundHistoryChatID;
+
     }
 
     // ICID not in memory or history
@@ -83,6 +84,7 @@ export async function promptPreprocessor(
         if (internalChatID !== "") {
             createNewInternalChatID = true;
         }
+
     }
 
     // If we still do not know InternalChatID after the recovery
@@ -90,6 +92,7 @@ export async function promptPreprocessor(
     if (internalChatID === "") {
         internalChatID = Math.floor(Date.now() / 1000).toString();
         createNewInternalChatID = true;
+
     }
 
     // Use the pre-existing InternalChatID found
@@ -99,7 +102,7 @@ export async function promptPreprocessor(
 
         conversationFileName = await promptProcessorScanForConversationFile(
             userText, 
-            workingDirectory
+            workingDirectory,
         );
 
         conversationFileName = normalizeJsonFileName(conversationFileName);
@@ -474,7 +477,7 @@ async function promptProcessorScanForConversationFile(
     // 1st SCAN:
     // STEP 1: If there is a current relationship, check if the
     // conversation file still exists. If the file does not exist,
-    // remove the abandoned relationship.
+
     if (existingRelationship) {
 
         foundConversationFileName = await scanForConversationFileThruRelationshipFile(
@@ -489,10 +492,72 @@ async function promptProcessorScanForConversationFile(
 
             return foundConversationFileName
         }
+
+    } else {
+        // Nothing matched the InternalChatID
+        // Lets check to see if the current WD name is present
+        const directoryBaseNameFromWD = basename(workingDirectory);
+
+        const conversationFileName = `${directoryBaseNameFromWD}.conversation.json`;
+
+        const existingConversationRelationship = relationships.find(
+            (relationship) =>
+                relationship.conversationFile === conversationFileName,
+        );
+
+        if (existingConversationRelationship) {
+            
+            const lockFile = `${relationshipFile}.lock`;
+
+            await acquireLock(lockFile);
+
+            try {
+                // This conversation file name already has a relationship,
+                // update the InternalChatID in the relationship file.
+
+                const relationshipData = {
+                    internalChatID,
+                    conversationFile: conversationFileName,
+                };
+
+                // Remove the old copy of this relationship.
+                relationships = relationships.filter(
+                    (relationship) =>
+                        relationship.conversationFile !== conversationFileName,
+                );
+
+                // Reinsert it at the bottom so the newest relationship
+                // is always the last entry.
+                relationships.push(relationshipData);
+
+                // Keep only the newest relationships.
+                if (relationships.length > relationshipsLimit) {
+                    relationships = relationships.slice(-relationshipsLimit);
+                }
+
+                await writeFile(
+                    relationshipFile,
+                    JSON.stringify(relationships, null, 2),
+                    "utf-8",
+                );
+
+                // Update InternalChatID outer scope variable with what we just wrote in
+                internalChatID = relationshipData.internalChatID;
+                setConfigSchematics({conversationFileName: conversationFileName});
+                return conversationFileName;
+            } finally {
+                try {
+                    await unlink(lockFile);
+                } catch {
+                    // ignore
+                }
+            }
+        }
     }
 
     // 2nd SCAN:
     // STEP 3: Check if the basename of WD is a match for the conversation file.
+    // Brand new ICID was generated, this will link that new ICID to the foundConvversationFileName
     if (foundConversationFileName === "") {
 
         foundConversationFileName = await scanForConversationFileThruBaseNameOfWorkingDirectory(
@@ -565,7 +630,11 @@ async function promptProcessorScanForConversationFile(
             internalChatID = relationshipData.internalChatID;
 
         } finally {
-            await unlink(lockFile);
+            try {
+                await unlink(lockFile);
+            } catch {
+                // ignore
+            }
         }
     }
 
@@ -872,6 +941,8 @@ async function scanForConversationFileThruRelationshipFile(
         conversationFileName,
     );
 
+    // Check if conversation file stated in the relationship object passed in still exist.
+    // If it doesn't remove the entry in the relationship file.
     try {
         await access(conversationFilePath);
 
