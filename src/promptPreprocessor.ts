@@ -43,30 +43,51 @@ export async function promptPreprocessor(
 
     // Assume values can be lost during future runs because of random plugin reinitialization
 
-    // Read History to check for an InternalChatID
-    if (internalChatID === "") {
+    const foundHistoryChatID = await promptProcessorScanHistoryForID(messages);
 
-        internalChatID = await promptProcessorScanHistoryForID(messages);
+    if (foundHistoryChatID !== "") {
+        internalChatID = foundHistoryChatID;
     }
 
-    // First check of History for InternalChatID returned nothing
-    // So we must create one
-    if (internalChatID ===  "") {
+    if (foundHistoryChatID === "") {
 
-        createNewInternalChatID = true;
-        internalChatID = Date.now().toString();
+        // ICID still unknown
+        if (internalChatID === "") {
+
+            // Try to recover ICID through the relationship file.
+            internalChatID = await promptProcessorRecoverChatID(
+                internalChatID,
+                normalizeJsonFileName(conversationFileName),
+                workingDirectory,
+                userText,
+            );
+
+            // If InternalChatID still couldn't be discovered, create one.
+            if (internalChatID === "") {
+                // UNIX timestamp to the second rather than millisecond
+                // Another layer of protection against plugin race conditions
+                internalChatID = Math.floor(Date.now() / 1000).toString();
+            }
+        }
+
+        // ICID was not present in history, but we now have one
+        // that needs to be reintroduced.
+        if (internalChatID !== "") {
+            createNewInternalChatID = true;
+        }
     }
-    
+
     // Use the pre-existing InternalChatID found
     // to find the matching conversation file
     // Skip if we already know the conversation file
     if (conversationFileName === "") {
 
         conversationFileName = await promptProcessorScanForConversationFile(
-            internalChatID, 
             userText, 
             workingDirectory
         );
+
+        conversationFileName = normalizeJsonFileName(conversationFileName);
     }
     
     // Cleaning up whitespaces only, not misspellings
@@ -202,6 +223,113 @@ export async function promptPreprocessor(
 }
 
 /**
+ * Try to recover InternalChatID tag if the users deleted it from chat.
+ */
+interface ChatSessionConversationRelationship {
+    internalChatID: string;
+    conversationFile: string;
+}
+
+/**
+* Try and recover InternalChatID from in memory InternalChatID
+* or using the fallback of the scanForConversationFileThruBaseNameOfWorkingDirectory() scan
+* If either is impossible than there's no choice but to assign a new ICID
+*/
+async function promptProcessorRecoverChatID(
+    internalChatID: string,
+    conversationFileName: string,
+    workingDirectory: string,
+    userText: string,
+): Promise<string> {
+
+    const rootDirectory = await memoryStore.getRootDirectory();
+
+    // Construct the path to the conversation file
+    const conversationDirectory = join(
+        rootDirectory,
+        "conversations",
+    );
+
+    const relationshipFile = join(
+        conversationDirectory,
+        "ChatSessionConversationRelationship.json",
+    );
+
+    // If already available in memory, use it.
+    if (internalChatID !== "") {
+        return internalChatID;
+    }
+
+    // Cannot perform relationship lookup without a filename.
+    if (conversationFileName === "") {
+        
+        // Attempt a reverse lookup first using the basename of working directory
+        conversationFileName = await scanForConversationFileThruBaseNameOfWorkingDirectory(
+            workingDirectory,
+            conversationDirectory,
+            conversationFileName,
+            userText,
+        );
+        
+        // Conversation File Name still unknown, cannot resume with recovery
+        if(conversationFileName === "") {
+            return "";
+        }
+    }
+
+    try {
+        
+        const relationshipJson = await readFile(
+            relationshipFile,
+            "utf-8",
+        );
+
+        const relationships: ChatSessionConversationRelationship[] =
+            JSON.parse(relationshipJson);
+
+        // Search from newest to oldest.
+        // Grab the newest relationship that matches the coversation file name
+        // There cannot be two conversations files with the same exact name in a folder
+        // At worst we are repurposing an abandoned ICID rather than making a new one
+        for (
+            let i = relationships.length - 1;
+            i >= 0;
+            i--
+        ) {
+
+            const relationship = relationships[i];
+
+            if (relationship.conversationFile === conversationFileName) {
+                return relationship.internalChatID;
+            }
+        }
+
+    } catch (error: any) {
+
+        if (error instanceof SyntaxError) {
+
+            console.error(
+                `Relationship file JSON is corrupted: ${error.message}`,
+            );
+
+        } else if (error.code === "ENOENT") {
+
+            console.error(
+                "Relationship file not found.",
+            );
+
+        } else {
+
+            console.error(
+                `Relationship lookup failed: ${error}`,
+            );
+        }
+    }
+
+    return "";
+}
+
+/**
 * Scan history for InternalChatID tag.
 * Cheaper than scanning the conversation file, if
 * The conversation file name is still unknown, or the
@@ -288,7 +416,6 @@ async function promptProcessorScanHistoryForNumberingInstruction(
 * sent a fresh text through to the assistant, meaning it's the only real-time user input
 */
 async function promptProcessorScanForConversationFile(
-    internalChatID: string,
     userText: string,
     workingDirectory: string,
 ): Promise<string> {
@@ -333,170 +460,41 @@ async function promptProcessorScanForConversationFile(
     // remove the abandoned relationship.
     if (existingRelationship) {
 
-        const conversationFileName = existingRelationship.conversationFile;
-
-        const conversationFilePath = join(
+        foundConversationFileName = await scanForConversationFileThruRelationshipFile(
+            existingRelationship,
             conversationDirectory,
-            conversationFileName,
-        );
+            foundConversationFileName,
+            relationships,
+            relationshipFile,
+        )
 
-        try {
-            await access(conversationFilePath);
+        if(foundConversationFileName !== "") {
 
-            // File exists
-            foundConversationFileName = conversationFileName;
-
-        } catch {
-            // Conversation file no longer exists.
-            // Remove abandoned relationship.
-            relationships = relationships.filter(
-                (relationship) =>
-                    relationship.internalChatID !== internalChatID,
-            );
-
-            await writeFile(
-                relationshipFile,
-                JSON.stringify(relationships, null, 2),
-                "utf-8",
-            );
-        }
-
-        // STEP 2:
-        // If the conversation file still exists, open it to confirm ICID.
-        if (foundConversationFileName !== "") {
-
-            const conversationContent = await readFile(
-                conversationFilePath,
-                "utf-8",
-            );
-
-            const internalChatIDPattern = new RegExp(
-                `\\[ICID:\\s*${internalChatID}\\]`,
-            );
-
-            const icidMatches = internalChatIDPattern.test(conversationContent);
-
-            // STEP 2.1:
-            // Existing relationship is valid, so return immediately.
-            if (icidMatches) {
-                setConfigSchematics({conversationFileName: foundConversationFileName});
-                return foundConversationFileName;
-            }
-
-            // Existing relationship is invalid.
-            // Clear it and continue with the remaining scans.
-            foundConversationFileName = "";
+            return foundConversationFileName
         }
     }
 
     // 2nd SCAN:
     // STEP 3: Check if the basename of WD is a match for the conversation file.
     if (foundConversationFileName === "") {
-        try {
-            const directoryBaseNameFromWD = basename(workingDirectory);
 
-            const conversationFileName = `${directoryBaseNameFromWD}.conversation.json`;
-
-            const conversationFilePath = join(
-                conversationDirectory,
-                conversationFileName,
-            );
-
-            const conversationContent = await readFile(
-                conversationFilePath,
-                "utf-8",
-            );
-
-            const internalChatIDPattern = new RegExp(
-                `\\[ICID:\\s*${internalChatID}\\]`,
-            );
-
-            // First check for the ICID.
-            if (internalChatIDPattern.test(conversationContent)) {
-                foundConversationFileName = conversationFileName;
-            }
-
-            // If ICID did not match, check clientInput.
-            if (foundConversationFileName === "") {
-                try {
-                    const conversation = JSON.parse(conversationContent);
-
-                    const clientInput = conversation.clientInput?.trim() ?? "";
-
-                    const input = userText.trim();
-
-                    if (
-                        clientInput.length > 0 &&
-                        input.startsWith(clientInput)
-                    ) {
-                        foundConversationFileName = conversationFileName;
-                    }
-
-                } catch {
-                    // Ignore malformed conversation content
-                    // and continue to the next scan.
-                }
-            }
-
-        } catch (error: any) {
-
-            if (error?.code !== "ENOENT") {
-                console.error(error);
-            }
-
-            // Just move to next scan.
-        }
+        foundConversationFileName = await scanForConversationFileThruBaseNameOfWorkingDirectory(
+            workingDirectory,
+            conversationDirectory,
+            foundConversationFileName,
+            userText,
+        )
     }
 
     // 3rd SCAN:
     // STEP 4: Scan each conversation file starting from the newest.
-    //
-    // Only perform this scan if STEP 3 did not find a match.
     if (foundConversationFileName === "") {
 
-        const allConversationFiles = await findAllConversationFiles(conversationDirectory);
-
-        const internalChatIDPattern = new RegExp(
-            `\\[ICID:\\s*${internalChatID}\\]`,
-        );
-
-        for (const conversationFile of allConversationFiles) {
-
-            const conversationContent = await readFile(
-                conversationFile,
-                "utf-8",
-            );
-
-            // First try to match the InternalChatID.
-            if (internalChatIDPattern.test(conversationContent)) {
-                foundConversationFileName = basename(conversationFile);
-
-                break;
-            }
-
-            // 4th SCAN:
-            // Fallback for brand-new conversations where the
-            // InternalChatID has not yet been injected.
-            try {
-                const conversation = JSON.parse(conversationContent);
-
-                const clientInput = conversation.clientInput?.trim() ?? "";
-
-                const input = userText.trim();
-
-                if (
-                    clientInput.length > 0 &&
-                    input.startsWith(clientInput)
-                ) {
-                    foundConversationFileName = basename(conversationFile);
-
-                    break;
-                }
-
-            } catch {
-                // Ignore malformed conversation files and continue scanning.
-            }
-        }
+        foundConversationFileName = await scanForConversationFileThruFullConversationDirectoryScan(
+            conversationDirectory,
+            foundConversationFileName,
+            userText,
+        )
     }
 
     // FINAL STEP:
@@ -504,22 +502,34 @@ async function promptProcessorScanForConversationFile(
     // create/update the relationship in ChatSessionConversationRelationship.json.
     if (foundConversationFileName !== "") {
 
-        // Remove any existing relationship for this InternalChatID
-        // before creating the new association.
-        relationships = relationships.filter(
+        // If this conversation file already has a relationship,
+        // reuse its existing InternalChatID.
+        const existingRelationship = relationships.find(
             (relationship) =>
-                relationship.internalChatID !== internalChatID,
+                relationship.conversationFile === foundConversationFileName,
         );
+
+        if (existingRelationship) {
+            internalChatID = existingRelationship.internalChatID;
+        }
 
         const relationshipData = {
             internalChatID,
             conversationFile: foundConversationFileName,
         };
 
+        // Remove the old copy of this relationship.
+        relationships = relationships.filter(
+            (relationship) =>
+                relationship.internalChatID !== internalChatID &&
+                relationship.conversationFile !== foundConversationFileName,
+        );
+
+        // Reinsert it at the bottom so the newest relationship
+        // is always the last entry.
         relationships.push(relationshipData);
 
-        // Control the file size.
-        // Keep only the newest Nth relationships.
+        // Keep only the newest relationships.
         if (relationships.length > relationshipsLimit) {
             relationships = relationships.slice(-relationshipsLimit);
         }
@@ -528,6 +538,36 @@ async function promptProcessorScanForConversationFile(
             relationshipFile,
             JSON.stringify(relationships, null, 2),
             "utf-8",
+        );
+    }
+
+    // Re-read the relationship file and adopt
+    // whatever ICID is currently associated with
+    // this physical conversation file. Trying to work
+    // with race conditions of context-cleanup plugin and
+    // this plugin both deciding a brand new ICID was needed
+    // and their UNIX timestamp was not perfectly matched
+    try {
+        const relationshipJson = await readFile(
+            relationshipFile,
+            "utf-8",
+        );
+
+        const updatedRelationships: ChatSessionConversationRelationship[] =
+            JSON.parse(relationshipJson);
+
+        const currentRelationship = updatedRelationships.find(
+            (relationship) =>
+                relationship.conversationFile === foundConversationFileName,
+        );
+
+        if (currentRelationship) {
+            internalChatID = currentRelationship.internalChatID;
+        }
+
+    } catch (error: any) {
+        console.error(
+            `Failed to re-read conversation relationship: ${error}`,
         );
     }
 
@@ -811,6 +851,198 @@ function areStringArraysEqualAsSets(
     return [...aSet].every((value) => bSet.has(value));
 }
 
+export function normalizeJsonFileName(jsonFileName: string){
+
+    return jsonFileName.replace(/(\.json).*$/, "$1");
+}
+
+/**
+* Scanning options
+*/
+async function scanForConversationFileThruRelationshipFile(
+    existingRelationship: any,
+    conversationDirectory: string,
+    foundConversationFileName: string,
+    relationships: any[],
+    relationshipFile: string,
+):Promise<string> {
+
+    const conversationFileName = existingRelationship.conversationFile;
+
+    const conversationFilePath = join(
+        conversationDirectory,
+        conversationFileName,
+    );
+
+    try {
+        await access(conversationFilePath);
+
+        // File exists
+        foundConversationFileName = conversationFileName;
+
+    } catch {
+        // Conversation file no longer exists.
+        // Remove abandoned relationship.
+        relationships = relationships.filter(
+            (relationship) =>
+                relationship.internalChatID !== internalChatID,
+        );
+
+        await writeFile(
+            relationshipFile,
+            JSON.stringify(relationships, null, 2),
+            "utf-8",
+        );
+    }
+
+    // STEP 2:
+    // If the conversation file still exists, open it to confirm ICID.
+    if (foundConversationFileName !== "") {
+
+        const conversationContent = await readFile(
+            conversationFilePath,
+            "utf-8",
+        );
+
+        const internalChatIDPattern = new RegExp(
+            `\\[ICID:\\s*${internalChatID}\\]`,
+        );
+
+        const icidMatches = internalChatIDPattern.test(conversationContent);
+
+        // STEP 2.1:
+        // Existing relationship is valid, so return immediately.
+        if (icidMatches) {
+            setConfigSchematics({conversationFileName: foundConversationFileName});
+            return foundConversationFileName;
+        }
+
+        // Existing relationship is invalid.
+        // Clear it and continue with the remaining scans.
+        foundConversationFileName = "";
+    }
+
+    return foundConversationFileName;
+}
+
+async function scanForConversationFileThruBaseNameOfWorkingDirectory(
+    workingDirectory: string,
+    conversationDirectory: string,
+    foundConversationFileName: string,
+    userText: string,
+):Promise<string> {
+
+    try {
+        const directoryBaseNameFromWD = basename(workingDirectory);
+
+        const conversationFileName = `${directoryBaseNameFromWD}.conversation.json`;
+
+        const conversationFilePath = join(
+            conversationDirectory,
+            conversationFileName,
+        );
+
+        const conversationContent = await readFile(
+            conversationFilePath,
+            "utf-8",
+        );
+
+        const internalChatIDPattern = new RegExp(
+            `\\[ICID:\\s*${internalChatID}\\]`,
+        );
+
+        // First check for the ICID.
+        if (internalChatIDPattern.test(conversationContent)) {
+            foundConversationFileName = conversationFileName;
+        }
+
+        // If ICID did not match, check clientInput.
+        if (foundConversationFileName === "") {
+            try {
+                const conversation = JSON.parse(conversationContent);
+
+                const clientInput = conversation.clientInput?.trim() ?? "";
+
+                const input = userText.trim();
+
+                if (
+                    clientInput.length > 0 &&
+                    input.startsWith(clientInput)
+                ) {
+                    foundConversationFileName = conversationFileName;
+                }
+
+            } catch {
+                // Ignore malformed conversation content
+                // and continue to the next scan.
+            }
+        }
+
+    } catch (error: any) {
+
+        if (error?.code !== "ENOENT") {
+            console.error(error);
+        }
+
+        // Just move to next scan.
+    }
+
+    return foundConversationFileName;
+}
+
+async function scanForConversationFileThruFullConversationDirectoryScan(
+    conversationDirectory: string,
+    foundConversationFileName: string,
+    userText: string,
+):Promise<string> {
+
+    const allConversationFiles = await findAllConversationFiles(conversationDirectory);
+
+    const internalChatIDPattern = new RegExp(
+        `\\[ICID:\\s*${internalChatID}\\]`,
+    );
+
+    for (const conversationFile of allConversationFiles) {
+
+        const conversationContent = await readFile(
+            conversationFile,
+            "utf-8",
+        );
+
+        // First try to match the InternalChatID.
+        if (internalChatIDPattern.test(conversationContent)) {
+            foundConversationFileName = basename(conversationFile);
+
+            break;
+        }
+
+        // 4th SCAN:
+        // Fallback for brand-new conversations where the
+        // InternalChatID has not yet been injected.
+        try {
+            const conversation = JSON.parse(conversationContent);
+
+            const clientInput = conversation.clientInput?.trim() ?? "";
+
+            const input = userText.trim();
+
+            if (
+                clientInput.length > 0 &&
+                input.startsWith(clientInput)
+            ) {
+                foundConversationFileName = basename(conversationFile);
+
+                break;
+            }
+
+        } catch {
+            // Ignore malformed conversation files and continue scanning.
+        }
+    }
+
+    return foundConversationFileName;
+}
+
 /**
 * Gather all the conversation files and order them
 * from newest to oldest. The main function promptProcessorScanForConversationFile
@@ -876,4 +1108,3 @@ async function findAllConversationFiles(
         (file) => file.filePath,
     );
 }
-

@@ -1,4 +1,5 @@
 import { createConfigSchematics } from "@lmstudio/sdk";
+import { normalizeJsonFileName } from "./promptPreprocessor"
 
 let currentMemorySeedsPool: readonly string[] = [];
 let currentMemorySeedsSelected: readonly string[] = [];
@@ -80,7 +81,7 @@ export function setConfigSchematics({
     }
 
     if (conversationFileName !== undefined) {
-        currentConversationFileName = conversationFileName;
+        currentConversationFileName = normalizeJsonFileName(conversationFileName);
     }
 
     configSchematics = createConfig(
