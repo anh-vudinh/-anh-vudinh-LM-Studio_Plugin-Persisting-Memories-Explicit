@@ -57,7 +57,11 @@ export async function removeMemorySeeds(
                     Date.now() - lockStats.mtimeMs;
 
                 if (lockAgeMs > 10_000) {
-                    await unlink(lockFile);
+                    try {
+                        await unlink(lockFile);
+                    } catch {
+                        // ignore
+                    }
 
                     console.log(
                         `Removed stale lock file: ${lockFile}`,
