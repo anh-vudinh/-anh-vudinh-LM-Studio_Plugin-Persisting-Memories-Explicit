@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
 import { memoryStore } from "./memoryStore";
-import { configSchematics } from "./config";
+import { configSchematics, getSaveMemoryNumber } from "./config";
 import { getMemorySeedsPool } from "./memorySession";
 import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
 
@@ -42,20 +42,10 @@ export async function toolsProvider(
     name: "persist_seed",
 
     description:
-      "Use when user says, `save memory message <N>`, messageNumber is set to <N>." +
-      "User must have said `save memory` to use this tool." +
-      "Only allowed to call this tool once per turn. No repeated calls and stop at first failure." +
-      "If user must first provide the category and name before the assistant can call this tool.",
+      `Use when user says, "save memory"; category; name; or "save memory" followed by a digit.` +
+      `User must first have provided the category and name before this tool can be used.`,
 
     parameters: {
-      messageNumber: z
-        .number()
-        .int()
-        .min(1)
-        .describe(
-          "Exact number provided by the user as message <N>."
-        ),
-
       category: z
         .string()
         .trim()
@@ -75,7 +65,6 @@ export async function toolsProvider(
 
     implementation: async (
       params: {
-        messageNumber: number;
         category: string;
         name: string;
       },
@@ -104,10 +93,12 @@ export async function toolsProvider(
           return "Memory Seed operation was aborted.";
         }
 
+        const saveMemoryNumber = getSaveMemoryNumber();
+
         const association = await associateAssistantResponse(
           ctl.client,
           history,
-          params.messageNumber
+          saveMemoryNumber,
         );
 
         await memoryStore.saveSeed(
@@ -126,7 +117,7 @@ export async function toolsProvider(
         }
 
         return (
-          `Memory Seed "${params.name}" saved under "${params.category}".`
+          `Memory Seed" ${params.category}/${params.name}" of msg ${saveMemoryNumber} has been saved.`
         );
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {

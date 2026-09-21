@@ -1,12 +1,26 @@
-import { configSchematics, setConfigSchematics } from "./config";
 import { setCurrentConversationHistory, getCurrentConversationHistory } from "./conversationHistoryCache";
 import { getMemorySeedsPool, updateMemorySeedsSelected, addMemorySeedToSelected, getMemorySeedsSelected } from "./memorySession";
 import { isEligibleAssistantMessage } from "./conversationReader";
 import { memoryStore } from "./memoryStore";
 import { removeMemorySeeds } from "./removeMemorySeeds";
-import { readFile, writeFile, access, readdir, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import path from "node:path";
+
+import {
+    configSchematics,
+    setConfigSchematics,
+    setSaveMemoryNumber
+} from "./config";
+
+import { 
+    readFile, 
+    writeFile, 
+    access, 
+    readdir, 
+    stat,
+    open,
+    unlink
+} from "node:fs/promises";
 
 import type {
     ChatMessage,
@@ -17,6 +31,9 @@ let injectedMemorySeeds: string[] | null = null;
 let cleanupAllSeeds: boolean;
 let internalChatID = "";
 const relationshipsLimit = 15;
+const LOCK_TIMEOUT_MS = 10_000;
+const POLL_INTERVAL_MS = 100;
+
 /**
 * https://github.com/anh-vudinh
 * Main function that directs the flow of the plugin
@@ -45,36 +62,34 @@ export async function promptPreprocessor(
 
     const foundHistoryChatID = await promptProcessorScanHistoryForID(messages);
 
+    // ICID exist in history still
     if (foundHistoryChatID !== "") {
         internalChatID = foundHistoryChatID;
     }
 
-    if (foundHistoryChatID === "") {
+    // ICID not in memory or history
+    if (internalChatID === "" &&
+        foundHistoryChatID === ""
+    ) {
+        // Try to recover ICID through the relationship file.
+        // ICID will still be blank at this point
+        internalChatID = await promptProcessorRecoverChatID(
+            internalChatID,
+            normalizeJsonFileName(conversationFileName),
+            workingDirectory,
+            userText,
+        );
 
-        // ICID still unknown
-        if (internalChatID === "") {
-
-            // Try to recover ICID through the relationship file.
-            internalChatID = await promptProcessorRecoverChatID(
-                internalChatID,
-                normalizeJsonFileName(conversationFileName),
-                workingDirectory,
-                userText,
-            );
-
-            // If InternalChatID still couldn't be discovered, create one.
-            if (internalChatID === "") {
-                // UNIX timestamp to the second rather than millisecond
-                // Another layer of protection against plugin race conditions
-                internalChatID = Math.floor(Date.now() / 1000).toString();
-            }
-        }
-
-        // ICID was not present in history, but we now have one
-        // that needs to be reintroduced.
         if (internalChatID !== "") {
             createNewInternalChatID = true;
         }
+    }
+
+    // If we still do not know InternalChatID after the recovery
+    // We must create a new one
+    if (internalChatID === "") {
+        internalChatID = Math.floor(Date.now() / 1000).toString();
+        createNewInternalChatID = true;
     }
 
     // Use the pre-existing InternalChatID found
@@ -156,22 +171,24 @@ export async function promptPreprocessor(
     // to believe the format requirement is a second message save request
     let numberingInstruction = "";
 
-    const isSaveMemoryRequest =
-        /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i
-            .test(userText);
-    
+    const saveMemoryMatch = userText.match(
+        /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b\s*(\d+)/i,
+    );
+
+    if (saveMemoryMatch) {
+        setSaveMemoryNumber(Number(saveMemoryMatch[1]));
+    }
+
     // Append full numbering instruction only once if not done yet
     if (await promptProcessorScanHistoryForNumberingInstruction(messages) === false) {
 
         numberingInstruction = 
             `Formatting Instruction: for every turn where a [ADD_MN_<##>] tag appears in the user's turn, append **message <##>** at the end of the assistant's response. `+
-            `:End of Instruction. For this turn only the tag is [ADD_MN_${assistantIndex}]`;
+            `This is to help the user identify the current turn's message number :End of Instruction. For this turn only the tag is [ADD_MN_${assistantIndex}]`;
 
     } else {
 
-        numberingInstruction = isSaveMemoryRequest
-            ? ""
-            : `[ADD_MN_${assistantIndex}]`;
+        numberingInstruction = `[ADD_MN_${assistantIndex}]`;
     }
     
     // Remove all memory seeds
@@ -208,16 +225,16 @@ export async function promptPreprocessor(
     if (injectedContext) {
 
         return (
-            `${userText}.\n` +
-            `${createNewInternalChatID? `[ICID: ${internalChatID}] . ` : ""}` +
-            `${injectedContext}[END OF MEMORIES]\n` +
+            `${userText}. ` +
+            `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}` +
+            `${injectedContext}[END OF MEMORIES] ` +
             `${numberingInstruction}`
         );
     }
 
     return (
-        `${userText}.\n` +
-        `${createNewInternalChatID? `[ICID: ${internalChatID}] . ` : ""}` +
+        `${userText}. ` +
+        `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}` +
         `${numberingInstruction}`
     );
 }
@@ -391,7 +408,7 @@ async function promptProcessorScanHistoryForNumberingInstruction(
                 continue;
             }
 
-            if (/\[ADD_MN_\d+\]/.test(content.text)) {
+            if (/\[ADD_MN_<##>\]/.test(content.text)) {
                 return true;
             }
         }
@@ -500,75 +517,56 @@ async function promptProcessorScanForConversationFile(
     // FINAL STEP:
     // If we found a conversation file through STEP 3 or STEP 4,
     // create/update the relationship in ChatSessionConversationRelationship.json.
+    const lockFile = `${relationshipFile}.lock`;
+
     if (foundConversationFileName !== "") {
+        await acquireLock(lockFile);
 
-        // If this conversation file already has a relationship,
-        // reuse its existing InternalChatID.
-        const existingRelationship = relationships.find(
-            (relationship) =>
-                relationship.conversationFile === foundConversationFileName,
-        );
+        try {
+            // If this conversation file already has a relationship,
+            // reuse its existing InternalChatID.
+            const existingRelationship = relationships.find(
+                (relationship) =>
+                    relationship.conversationFile === foundConversationFileName,
+            );
 
-        if (existingRelationship) {
-            internalChatID = existingRelationship.internalChatID;
+            if (existingRelationship) {
+                internalChatID = existingRelationship.internalChatID;
+            }
+
+            const relationshipData = {
+                internalChatID,
+                conversationFile: foundConversationFileName,
+            };
+
+            // Remove the old copy of this relationship.
+            relationships = relationships.filter(
+                (relationship) =>
+                    relationship.internalChatID !== internalChatID &&
+                    relationship.conversationFile !== foundConversationFileName,
+            );
+
+            // Reinsert it at the bottom so the newest relationship
+            // is always the last entry.
+            relationships.push(relationshipData);
+
+            // Keep only the newest relationships.
+            if (relationships.length > relationshipsLimit) {
+                relationships = relationships.slice(-relationshipsLimit);
+            }
+
+            await writeFile(
+                relationshipFile,
+                JSON.stringify(relationships, null, 2),
+                "utf-8",
+            );
+
+            // Update InternalChatID outer scope variable with what we just wrote in
+            internalChatID = relationshipData.internalChatID;
+
+        } finally {
+            await unlink(lockFile);
         }
-
-        const relationshipData = {
-            internalChatID,
-            conversationFile: foundConversationFileName,
-        };
-
-        // Remove the old copy of this relationship.
-        relationships = relationships.filter(
-            (relationship) =>
-                relationship.internalChatID !== internalChatID &&
-                relationship.conversationFile !== foundConversationFileName,
-        );
-
-        // Reinsert it at the bottom so the newest relationship
-        // is always the last entry.
-        relationships.push(relationshipData);
-
-        // Keep only the newest relationships.
-        if (relationships.length > relationshipsLimit) {
-            relationships = relationships.slice(-relationshipsLimit);
-        }
-
-        await writeFile(
-            relationshipFile,
-            JSON.stringify(relationships, null, 2),
-            "utf-8",
-        );
-    }
-
-    // Re-read the relationship file and adopt
-    // whatever ICID is currently associated with
-    // this physical conversation file. Trying to work
-    // with race conditions of context-cleanup plugin and
-    // this plugin both deciding a brand new ICID was needed
-    // and their UNIX timestamp was not perfectly matched
-    try {
-        const relationshipJson = await readFile(
-            relationshipFile,
-            "utf-8",
-        );
-
-        const updatedRelationships: ChatSessionConversationRelationship[] =
-            JSON.parse(relationshipJson);
-
-        const currentRelationship = updatedRelationships.find(
-            (relationship) =>
-                relationship.conversationFile === foundConversationFileName,
-        );
-
-        if (currentRelationship) {
-            internalChatID = currentRelationship.internalChatID;
-        }
-
-    } catch (error: any) {
-        console.error(
-            `Failed to re-read conversation relationship: ${error}`,
-        );
     }
 
     // Set config state after scanning and relationship persistence.
@@ -972,6 +970,48 @@ async function scanForConversationFileThruBaseNameOfWorkingDirectory(
                     foundConversationFileName = conversationFileName;
                 }
 
+                // we now know the conversationfilename
+                // reverse lookup ICID if it already exist in relationship file.
+                // This will help sync the in memory ICID to what we already have on file
+                // and control if a brand new ICID is actually assigned.
+                if (foundConversationFileName !== "") {
+
+                    const rootDirectory = await memoryStore.getRootDirectory();
+                    let relationships: any[] = [];
+
+                    // Construct the path to the conversation file
+                    const conversationDirectory = join(
+                        rootDirectory,
+                        "conversations"
+                    );
+
+                    const relationshipFile = join(
+                        conversationDirectory,
+                        "ChatSessionConversationRelationship.json",
+                    );
+
+                    try {
+                        const relationshipJson = await readFile(
+                            relationshipFile,
+                            "utf-8",
+                        );
+
+                        relationships = JSON.parse(relationshipJson);
+
+                    } catch {
+                        // File doesn't exist yet, so we'll create it in a later step.
+                    }
+
+                    const existingRelationship = relationships.find(
+                        (relationship) =>
+                            relationship.conversationFile === foundConversationFileName,
+                    );
+
+                    if (existingRelationship) {
+                        internalChatID = existingRelationship.internalChatID;
+                    }
+                }
+
             } catch {
                 // Ignore malformed conversation content
                 // and continue to the next scan.
@@ -986,6 +1026,8 @@ async function scanForConversationFileThruBaseNameOfWorkingDirectory(
 
         // Just move to next scan.
     }
+
+    setConfigSchematics({conversationFileName: foundConversationFileName});
 
     return foundConversationFileName;
 }
@@ -1077,6 +1119,10 @@ async function findAllConversationFiles(
                     continue;
                 }
 
+                if ( entry.name === "ChatSessionConversationRelationship.json.lock") {
+                    continue;
+                }
+
                 conversationFiles.push(fullPath);
                 continue;
             }
@@ -1107,4 +1153,43 @@ async function findAllConversationFiles(
     return filesWithModifiedTime.map(
         (file) => file.filePath,
     );
+}
+
+async function acquireLock(lockFile: string): Promise<void> {
+    while (true) {
+        try {
+            const handle = await open(lockFile, "wx");
+            await handle.close();
+
+            return;
+        } catch (error) {
+            const fsError = error as NodeJS.ErrnoException;
+
+            if (fsError.code !== "EEXIST") {
+                throw error;
+            }
+
+            try {
+                const stats = await stat(lockFile);
+                const lockAge = Date.now() - stats.mtimeMs;
+
+                if (lockAge >= LOCK_TIMEOUT_MS) {
+                    await unlink(lockFile);
+                    continue;
+                }
+            } catch (error) {
+                const fsError = error as NodeJS.ErrnoException;
+
+                if (fsError.code !== "ENOENT") {
+                    throw error;
+                }
+
+                continue;
+            }
+
+            await new Promise<void>((resolve) =>
+                setTimeout(resolve, POLL_INTERVAL_MS),
+            );
+        }
+    }
 }

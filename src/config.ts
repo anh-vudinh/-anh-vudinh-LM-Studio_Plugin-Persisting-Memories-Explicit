@@ -4,6 +4,7 @@ import { normalizeJsonFileName } from "./promptPreprocessor"
 let currentMemorySeedsPool: readonly string[] = [];
 let currentMemorySeedsSelected: readonly string[] = [];
 let currentConversationFileName = "";
+let saveMemoryNumber: number | null = null;
 
 export function createConfig(
     memorySeedsPool: readonly string[],
@@ -37,7 +38,7 @@ export function createConfig(
             "stringArray",
             {
                 displayName: "Available Memories",
-                subtitle: "DISPLAY ONLY: To create a new memory type to the assistant: save memory message #; category <cat_name>; name <file_name>",
+                subtitle: "DISPLAY ONLY: To create a new memory type to the assistant: save memory <message_#>; category <cat_name>; name <file_name>",
                 hint: "Copy/paste full names to Memories to Inject or Delete Memory fields.",
                 allowEmptyStrings: false,
             },
@@ -89,4 +90,13 @@ export function setConfigSchematics({
         currentMemorySeedsSelected,
         currentConversationFileName,
     );
+}
+
+
+export function setSaveMemoryNumber(value: number): void {
+    saveMemoryNumber = value;
+}
+
+export function getSaveMemoryNumber(): number {
+    return saveMemoryNumber!;
 }

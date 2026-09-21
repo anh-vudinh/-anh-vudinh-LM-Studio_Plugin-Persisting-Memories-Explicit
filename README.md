@@ -35,9 +35,10 @@ From LM Studio Website: Install from the LM Studio Hub then enable the plugin.
 
 From GitHub Source Code: Open PowerShell/terminal, navigate to root folder of the plugin you downloaded where you see the README, package, and manifest. Enter in `lms dev -i -y` . Plugin should now be available in LM Studio.
 
-Make sure the **`save_memory`** tool is enabled in the plugin's **Tools** section (this is mandatory — if it's off, the model can't use the plugin at all).
+Make sure the **`persist_seed`** tool is enabled in the plugin's **Tools** section (this is mandatory — if it's off, the model can't use the plugin at all).
 
-To use, while the plugin is enabled, type to the model save memory message #, category category_name, name memory_name.
+To use, while the plugin is enabled, type to the model, "save memory `<message _#>`; category `<category_name>`; name `<memory_name>`".
+(example: save memory 4; category cats; name some_information)
 If you forget the category or name the model should ask for it before running the tool. The plugin will ask the model to visually identify each message # to you, just base your # provided off what you're shown.
 
 ## Typical Workflow
