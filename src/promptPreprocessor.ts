@@ -186,12 +186,12 @@ export async function promptPreprocessor(
     if (await promptProcessorScanHistoryForNumberingInstruction(messages) === false) {
 
         numberingInstruction = 
-            `Formatting Instruction: for every turn where a [ADD_MN_<##>] tag appears in the user's turn, append **message <##>** at the end of the assistant's response. `+
-            `This is to help the user identify the current turn's message number :End of Instruction. For this turn only the tag is [ADD_MN_${assistantIndex}]`;
+            `Formatting Instruction: Help the user identify what current assistant turn it is by appending **message <##>** at the end of each assistant's response on it's own separate line. `+
+            `:End of Instruction.`;
 
     } else {
 
-        numberingInstruction = `[ADD_MN_${assistantIndex}]`;
+        // numberingInstruction = `[ADD_MN_${assistantIndex}]`;
     }
     
     // Remove all memory seeds
@@ -228,17 +228,17 @@ export async function promptPreprocessor(
     if (injectedContext) {
 
         return (
-            `${userText}. ` +
-            `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}` +
+            `${userText}.            ` +
             `${injectedContext}[END OF MEMORIES] ` +
-            `${numberingInstruction}`
+            `${numberingInstruction}` +
+            `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
         );
     }
 
     return (
-        `${userText}. ` +
-        `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}` +
-        `${numberingInstruction}`
+        `${userText}.            ` +
+        `${numberingInstruction}` +
+        `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
     );
 }
 
