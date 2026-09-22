@@ -3,7 +3,12 @@ import { join, } from "node:path";
 import { writeFile, readFile, unlink, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { removeMemorySeedFromSelected, updateMemorySeedsSelected } from "./memorySession";
-import { setConfigSchematics } from "./config";
+import { 
+    setConfigSchematics,
+    getLockFileOriginatesFromThisPlugin,
+    setLockFileOriginatesFromThisPlugin,
+ } from "./config";
+import { acquireLock } from "./promptPreprocessor"
 
 export async function removeMemorySeeds(
     conversationFileName: string,
@@ -49,33 +54,16 @@ export async function removeMemorySeeds(
         // My context cleanup plugin is responsible for it's own removal
         // but this is just a safety measure incase that plugin was unable to
         // remove its lock file.
-        if (existsSync(lockFile)) {
-            try {
-                const lockStats = await stat(lockFile);
+        await acquireLock(lockFile);
 
-                const lockAgeMs =
-                    Date.now() - lockStats.mtimeMs;
+        // let lockWasPresent = false;
 
-                if (lockAgeMs > 10_000) {
-                    try {
-                        await unlink(lockFile);
-                    } catch {
-                        // ignore
-                    }
+        const lockOriginatesFromThisPlugin =
+            getLockFileOriginatesFromThisPlugin(lockFile);
 
-                    console.log(
-                        `Removed stale lock file: ${lockFile}`,
-                    );
-                }
-            } catch (error) {
-                console.error(
-                    "Error checking stale lock file:",
-                    error,
-                );
-            }
-        }
-
-        let lockWasPresent = false;
+        const pollInterval = lockOriginatesFromThisPlugin === false
+                ? 100
+                : 500;
 
         // Initiated polling until assistantLastMessagedAt value changes
         // then initiate the conversation json overwrite
@@ -88,16 +76,25 @@ export async function removeMemorySeeds(
 
                 const latestConversation = JSON.parse(latestJson);
 
-                const lockExists = existsSync(lockFile);
+                // const lockExists = existsSync(lockFile);
                 
-                if (lockExists) {
-                    lockWasPresent = true;
-                }
+                // if (lockExists) {
+                //     lockWasPresent = true;
+                // }
 
-                if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt && 
-                    lockExists === false
-                ) {
+                // if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt && 
+                //     lockExists === false
+                // ) {
+                if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
+
                     clearInterval(pollForAssistantUpdate);
+
+                    // false = another plugin created the lock → 20ms
+                    // true/null = this plugin created it or no lock was present → 2000ms
+                    const delay =
+                        getLockFileOriginatesFromThisPlugin(lockFile) === false
+                            ? 100
+                            : 2000;
                 
                     // This timeout is to circumvent LM Studio's behavior
                     setTimeout(async () => {
@@ -145,10 +142,17 @@ export async function removeMemorySeeds(
                                 "Error during delayed memory seed cleanup:",
                                 error,
                             );
+                        } finally {
+                            try {
+                                await unlink(lockFile);
+                                console.log("=====lock PM removed=====")
+                            } catch {
+                                // ignore
+                            } finally {
+                                setLockFileOriginatesFromThisPlugin(lockFile, null);
+                            }
                         }
-                    }, lockWasPresent? 20 : 2000);  
-                    // CANNOT BE LESS THAN 2000ms, if you go lower than this something LM Studio is doing on the backend is caching an older version with the seeds still present.
-                    // The ternary allows for shortening if the context-cleanup plugin waited the 2000ms already.
+                    }, delay);
                 }
             } catch (error) {
                 clearInterval(pollForAssistantUpdate);
@@ -158,7 +162,7 @@ export async function removeMemorySeeds(
                     error,
                 );
             }
-        }, lockWasPresent? 20 : 800);
+        }, pollInterval);
 
         return validMemorySeedsSelected;
 

@@ -9,7 +9,9 @@ import path from "node:path";
 import {
     configSchematics,
     setConfigSchematics,
-    setSaveMemoryNumber
+    setSaveMemoryNumber,
+    setLockFileOriginatesFromThisPlugin,
+    getLockFileOriginatesFromThisPlugin
 } from "./config";
 
 import { 
@@ -31,7 +33,7 @@ let injectedMemorySeeds: string[] | null = null;
 let cleanupAllSeeds: boolean;
 let internalChatID = "";
 const relationshipsLimit = 15;
-const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_TIMEOUT_MS = 7_000;
 const POLL_INTERVAL_MS = 100;
 
 /**
@@ -57,6 +59,14 @@ export async function promptPreprocessor(
     const userText = userMessage.getText();
     const workingDirectory = ctl.getWorkingDirectory();
     let createNewInternalChatID = false;
+
+    const saveMemoryMatch = userText.match(
+        /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b\s*(\d+)/i,
+    );
+
+    if (saveMemoryMatch) {
+        setSaveMemoryNumber(Number(saveMemoryMatch[1]));
+    }
 
     // Assume values can be lost during future runs because of random plugin reinitialization
 
@@ -92,7 +102,6 @@ export async function promptPreprocessor(
     if (internalChatID === "") {
         internalChatID = Math.floor(Date.now() / 1000).toString();
         createNewInternalChatID = true;
-
     }
 
     // Use the pre-existing InternalChatID found
@@ -174,13 +183,14 @@ export async function promptPreprocessor(
     // to believe the format requirement is a second message save request
     let numberingInstruction = "";
 
-    const saveMemoryMatch = userText.match(
-        /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b\s*(\d+)/i,
-    );
+    // const saveMemoryMatch = userText.match(
+    //     /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b\s*(\d+)/i,
+    // );
 
-    if (saveMemoryMatch) {
-        setSaveMemoryNumber(Number(saveMemoryMatch[1]));
-    }
+    // if (saveMemoryMatch) {
+    //     setSaveMemoryNumber(Number(saveMemoryMatch[1]));
+    //     setConfigSchematics({conversationFileName: normalizeJsonFileName(conversationFileName)});
+    // }
 
     // Append full numbering instruction only once if not done yet
     if (await promptProcessorScanHistoryForNumberingInstruction(messages) === false) {
@@ -548,8 +558,11 @@ async function promptProcessorScanForConversationFile(
             } finally {
                 try {
                     await unlink(lockFile);
+                    console.log("========remove lock relationship PM SCAN1");
                 } catch {
                     // ignore
+                } finally {
+                    setLockFileOriginatesFromThisPlugin(lockFile, null);
                 }
             }
         }
@@ -632,8 +645,11 @@ async function promptProcessorScanForConversationFile(
         } finally {
             try {
                 await unlink(lockFile);
+                console.log("========remove lock relationship PM FINAL STEP");
             } catch {
                 // ignore
+            } finally {
+                setLockFileOriginatesFromThisPlugin(lockFile, null);
             }
         }
     }
@@ -1032,7 +1048,6 @@ async function scanForConversationFileThruBaseNameOfWorkingDirectory(
 
                 const normalize = (s: string): string =>
                     (s ?? "")
-                        .toLowerCase()
                         .trim()
                         .replace(/\s+/g, " ");
 
@@ -1142,7 +1157,6 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
 
             const normalize = (s: string): string =>
                 (s ?? "")
-                    .toLowerCase()
                     .trim()
                     .replace(/\s+/g, " ");
 
@@ -1236,10 +1250,33 @@ async function findAllConversationFiles(
     );
 }
 
-async function acquireLock(lockFile: string): Promise<void> {
+
+/**
+ * Three States for lock
+ * Null = no one claims ownership, abandoned file
+ * True = lock was successfully acquired by this plugin
+ * False = there was another lock exisiting before this plugin could acquire it
+ */
+export async function acquireLock(
+    lockFile: string
+): Promise<void> {
+
+    const startedAt = Date.now();
+
     while (true) {
+
+        if (Date.now() - startedAt >= 15_000) {
+            throw new Error(
+                `Timed out waiting for lock: ${lockFile}`,
+            );
+        }
+
         try {
             const handle = await open(lockFile, "wx");
+
+            setLockFileOriginatesFromThisPlugin(lockFile, true);
+            console.log("=====lock created by PM=====");
+
             await handle.close();
 
             return;
@@ -1249,6 +1286,9 @@ async function acquireLock(lockFile: string): Promise<void> {
             if (fsError.code !== "EEXIST") {
                 throw error;
             }
+
+            setLockFileOriginatesFromThisPlugin(lockFile, false);
+            console.log("=====lock not FROM PM=====");
 
             try {
                 const stats = await stat(lockFile);

@@ -5,6 +5,7 @@ let currentMemorySeedsPool: readonly string[] = [];
 let currentMemorySeedsSelected: readonly string[] = [];
 let currentConversationFileName = "";
 let saveMemoryNumber: number | null = null;
+const lockFileOwnership = new Map<string, boolean | null>();
 
 export function createConfig(
     memorySeedsPool: readonly string[],
@@ -92,11 +93,23 @@ export function setConfigSchematics({
     );
 }
 
-
 export function setSaveMemoryNumber(value: number | null): void {
     saveMemoryNumber = value;
 }
 
 export function getSaveMemoryNumber(): number | null {
     return saveMemoryNumber;
+}
+
+export function setLockFileOriginatesFromThisPlugin(
+    lockFile: string,
+    value: boolean | null,
+): void {
+    lockFileOwnership.set(lockFile, value);
+}
+
+export function getLockFileOriginatesFromThisPlugin(
+    lockFile: string,
+): boolean | null {
+    return lockFileOwnership.get(lockFile) ?? null;
 }

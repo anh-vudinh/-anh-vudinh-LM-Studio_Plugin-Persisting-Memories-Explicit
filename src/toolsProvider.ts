@@ -3,9 +3,11 @@ import { z } from "zod";
 import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
 import { memoryStore } from "./memoryStore";
-import { configSchematics, getSaveMemoryNumber, setSaveMemoryNumber } from "./config";
+import { configSchematics, getSaveMemoryNumber } from "./config";
 import { getMemorySeedsPool } from "./memorySession";
 import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
+import { join } from "node:path";
+import { normalizeJsonFileName, acquireLock } from "./promptPreprocessor";
 
 /**
 * ToolsProvider does not have much responsibility. Just to interpret when the user
@@ -17,7 +19,8 @@ export async function toolsProvider(
   const tools: Tool[] = [];
   const config = ctl.getPluginConfig(configSchematics);
   const memoryFileToDelete = config.get("deleteMemorySeedsFile") as string;
-  
+  let saveToolCallFinished = true;
+
   /**
   * Deletion logic is handled here because tools can get the real-time state
   * of the deleteMemorySeedsFile config field.
@@ -33,6 +36,32 @@ export async function toolsProvider(
     console.log("deleted ", normalizedMemoryFileToDelete)
   }
 
+  if (
+    getSaveMemoryNumber() !== null &&
+    config.get("conversationFileName") !== "" &&
+    saveToolCallFinished === true
+  ) {
+      // Prevents this function from spamming.
+      // Things here will keep invoking at regular intervals while the plugin is enabled.
+      // The reset happens when a tool call is finished.
+      saveToolCallFinished = false;
+
+      // Create lockfile so current history isn't overwritten while saving
+      const conversationDirectory = join(
+          await memoryStore.getRootDirectory(),
+          "conversations"
+      );
+      
+      const conversationFile = join(
+          conversationDirectory,
+          normalizeJsonFileName(config.get("conversationFileName") as string),
+      );
+      console.log("======conversationFile=======", conversationFile)
+      const lockFile = `${conversationFile}.lock`;
+
+      await acquireLock(lockFile);
+  }
+
   /**
    * ------------------------------------------------------------------------
    * persistingMemoriesTool
@@ -42,8 +71,9 @@ export async function toolsProvider(
     name: "persist_seed",
 
     description:
-      `Use when user says, "save memory"; category; name; or "save memory" followed by a digit.` +
-      `User must first have provided the category and name before this tool can be used.`,
+      `Use when user says, "save memory"; category; name; ` +
+      `User must first have provided the category and name before this tool can be used. ` +
+      `If the tool returns "The msg number provided is invalid", stop calling this tool.`,
 
     parameters: {
       category: z
@@ -70,6 +100,22 @@ export async function toolsProvider(
       },
       { signal }
     ) => {
+
+      // Create lockfile so current history isn't overwritten while saving
+      const conversationDirectory = join(
+          await memoryStore.getRootDirectory(),
+          "conversations"
+      );
+      
+      const conversationFile = join(
+          conversationDirectory,
+          normalizeJsonFileName(config.get("conversationFileName") as string),
+      );
+      console.log("======conversationFile=======", conversationFile)
+      const lockFile = `${conversationFile}.lock`;
+
+      //await acquireLock(lockFile);
+
       try {
 
         const saveMemoryNumber = getSaveMemoryNumber();
@@ -102,6 +148,7 @@ export async function toolsProvider(
 
         const validSaveMemoryNumber = saveMemoryNumber;
 
+        // Start the memory saving
         const association = await associateAssistantResponse(
           ctl.client,
           history,
@@ -117,11 +164,15 @@ export async function toolsProvider(
                 direct_input: association.directInput,
                 output: association.assistantResponse,
             },
+            lockFile,
         );
 
         if (signal.aborted) {
           return "Memory Seed operation was aborted.";
         }
+
+        // Reset state for new tool calls
+        saveToolCallFinished = true;
 
         return (
           `Memory Seed" ${params.category}/${params.name}" of msg ${validSaveMemoryNumber} has been saved.`
