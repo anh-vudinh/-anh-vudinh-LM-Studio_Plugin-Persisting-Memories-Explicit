@@ -182,3 +182,32 @@ export function setPreviousTurnSavingState(value: boolean | null): void {
 export function getPreviousTurnSavingState(): boolean | null {
     return previousSavingState;
 }
+
+// ============================================================
+// Multiple Edit Coordinator
+// ============================================================
+
+interface ConversationOperation {
+    name: string;
+    params: any;
+}
+
+let conversationOperations: ConversationOperation[] = [];
+
+export function addConversationOperation(
+    name: string,
+    params: any,
+): void {
+    conversationOperations.push({
+        name,
+        params,
+    });
+}
+
+export function getConversationOperations(): ConversationOperation[] {
+    return conversationOperations;
+}
+
+export function clearConversationOperations(): void {
+    conversationOperations = [];
+}

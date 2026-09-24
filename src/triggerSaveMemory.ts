@@ -5,8 +5,11 @@ import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import { isEligibleAssistantMessage } from "./conversationReader"
+import { multiEditCoordinator } from "./multiEditCoordinator";
 
 import {
+    getConversationOperations,
+    addConversationOperation,
     setPreviousTurnSavingState,
     getController,
     getCurrentConversationFileName,
@@ -178,6 +181,8 @@ export async function processMessage(
         updated.fileName !== null
     ) {
 
+        await appendSaveMemoryTextAtEndOfConversationJson(exitRequested);
+
         await saveMemory({
             memoryNumber: updated.memoryNumber,
             category: updated.category,
@@ -194,8 +199,8 @@ export async function processMessage(
     // ========================================================
     // STILL WAITING FOR SOMETHING
     // ========================================================
-
-    await requestMissingFieldsAtEndOfConversationJson(exitRequested);
+    
+    await appendSaveMemoryTextAtEndOfConversationJson(exitRequested);
 
     return {
         action: "waiting",
@@ -210,160 +215,208 @@ export async function processMessage(
     };
 }
 
-async function requestMissingFieldsAtEndOfConversationJson(
+async function appendSaveMemoryTextAtEndOfConversationJson(
     exitRequested: boolean,
 ): Promise<void> {
 
     const pendingSaveMemory = getPendingSaveMemory();
-    
-    if (
-        (pendingSaveMemory.active === true &&
-        pendingSaveMemory.memoryNumber !== null) ||
-        exitRequested === true
-    ) {
 
-        const rootDirectory = await memoryStore.getRootDirectory();
-        const conversationFileName = getCurrentConversationFileName();
+    addConversationOperation(
+        "tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction",
+        {
+            exitRequested,
+            pendingSaveMemory,
+        },
+    );
+// if(getConversationOperations().length === 0){
+//     if (
+//         (pendingSaveMemory.active === true &&
+//         pendingSaveMemory.memoryNumber !== null) ||
+//         exitRequested === true
+//     ) {
 
-        try{
-            // Construct the path to the conversation file
-            const conversationDirectory = join(
-                rootDirectory,
-                "conversations"
-            );
+//         const rootDirectory = await memoryStore.getRootDirectory();
+//         const conversationFileName = getCurrentConversationFileName();
 
-            const conversationFile = join(
-                conversationDirectory,
-                normalizeJsonFileName(conversationFileName),
-            );
+//         try{
+//             // Construct the path to the conversation file
+//             const conversationDirectory = join(
+//                 rootDirectory,
+//                 "conversations"
+//             );
+
+//             const conversationFile = join(
+//                 conversationDirectory,
+//                 normalizeJsonFileName(conversationFileName),
+//             );
             
-            // Prepare json file to be readable and assign to variable
-            const conversationJson = await readFile(
-                conversationFile,
-                "utf-8",
-            );
+//             // Prepare json file to be readable and assign to variable
+//             const conversationJson = await readFile(
+//                 conversationFile,
+//                 "utf-8",
+//             );
 
-            const conversation = JSON.parse(conversationJson);
+//             const conversation = JSON.parse(conversationJson);
             
-            // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
-            const originalAssistantLastMessagedAt =
-                conversation.assistantLastMessagedAt;
+//             // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
+//             const originalAssistantLastMessagedAt =
+//                 conversation.assistantLastMessagedAt;
 
-            const lockFile = `${conversationFile}.lock`;
+//             const lockFile = `${conversationFile}.lock`;
 
-            await acquireLock(lockFile);
+//             await acquireLock(lockFile);
 
-            const lockOriginatesFromThisPlugin =
-                getLockFileOriginatesFromThisPlugin(lockFile);
+//             const lockOriginatesFromThisPlugin =
+//                 getLockFileOriginatesFromThisPlugin(lockFile);
 
-            const pollInterval = lockOriginatesFromThisPlugin === false
-                    ? 100
-                    : 500;
+//             const pollInterval = lockOriginatesFromThisPlugin === false
+//                     ? 100
+//                     : 500;
 
-            // Initiated polling until assistantLastMessagedAt value changes
-            // then initiate the conversation json overwrite
-            const pollForAssistantUpdate = setInterval(async () => {
-                try {
-                    const latestJson = await readFile(
-                        conversationFile,
-                        "utf-8",
-                    );
+//             // Initiated polling until assistantLastMessagedAt value changes
+//             // then initiate the conversation json overwrite
+//             const pollForAssistantUpdate = setInterval(async () => {
+//                 try {
+//                     const latestJson = await readFile(
+//                         conversationFile,
+//                         "utf-8",
+//                     );
 
-                    const latestConversation = JSON.parse(latestJson);
+//                     const latestConversation = JSON.parse(latestJson);
 
-                    if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
+//                     if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
 
-                        clearInterval(pollForAssistantUpdate);
+//                         clearInterval(pollForAssistantUpdate);
 
-                        // false = another plugin created the lock → 20ms
-                        // true/null = this plugin created it or no lock was present → 2000ms
-                        const delay =
-                            getLockFileOriginatesFromThisPlugin(lockFile) === false
-                                ? 100
-                                : 2000;
+//                         // false = another plugin created the lock → 20ms
+//                         // true/null = this plugin created it or no lock was present → 2000ms
+//                         const delay =
+//                             getLockFileOriginatesFromThisPlugin(lockFile) === false
+//                                 ? 100
+//                                 : 2000;
                     
-                        // This timeout is to circumvent LM Studio's behavior
-                        setTimeout(async () => {
-                            try {
-                                const latestJson = await readFile(
-                                    conversationFile,
-                                    "utf-8",
-                                );
+//                         // This timeout is to circumvent LM Studio's behavior
+//                         setTimeout(async () => {
+//                             try {
+//                                 const latestJson = await readFile(
+//                                     conversationFile,
+//                                     "utf-8",
+//                                 );
 
-                                const latestConversation = JSON.parse(latestJson);
-                                let lines: string[] = [];
+//                                 const latestConversation = JSON.parse(latestJson);
 
-                                // Exit Save Memory State
-                                if(exitRequested === true) {
-                                    lines = (await constructAssistantReplySaveMemoryExit(pendingSaveMemory));
-                                } else {
-                                    // Category or File Name fields missing
-                                    if(
-                                        pendingSaveMemory.category === null ||
-                                        pendingSaveMemory.fileName === null
-                                    ) {
-                                        lines = (await constructAssistantReplyForMissingFields(pendingSaveMemory));
-                                    }
+//                                 let lines: string[] = [];
 
-                                    // Saved Memory
-                                    if(pendingSaveMemory.category !== null &&
-                                        pendingSaveMemory.fileName !== null){
-                                        lines = (await constructAssistantReplySaveMemory(pendingSaveMemory));
-                                    }
-                                }
+//                                 // // Exit Save Memory State
+//                                 // if(exitRequested === true) {
+//                                 //     lines = (await constructAssistantReplySaveMemoryExit(pendingSaveMemory));
+//                                 // } else {
+//                                 //     // Category or File Name fields missing
+//                                 //     if(
+//                                 //         pendingSaveMemory.category === null ||
+//                                 //         pendingSaveMemory.fileName === null
+//                                 //     ) {
+//                                 //         lines = (await constructAssistantReplyForMissingFields(pendingSaveMemory));
+//                                 //     }
 
-                                // EDIT ASSISTANT'S LAST MESSAGE
-                                await editAssistantResponse(
-                                    latestConversation,
-                                    lines.join("\n\n"),
-                                );
+//                                 //     // Saved Memory
+//                                 //     if(pendingSaveMemory.category !== null &&
+//                                 //         pendingSaveMemory.fileName !== null){
+//                                 //         lines = (await constructAssistantReplySaveMemory(pendingSaveMemory));
+//                                 //     }
+//                                 // }
+//                                 lines = await tryRequestMissingFieldsAtEndOfConversationJsonTimeoutFunction(
+//                                     exitRequested,
+//                                     pendingSaveMemory,
+//                                 );
 
-                                await writeFile(
-                                    conversationFile,
-                                    JSON.stringify(latestConversation, null, 2),
-                                    "utf-8",
-                                );
+//                                 // EDIT ASSISTANT'S LAST MESSAGE
+//                                 await editAssistantResponse(
+//                                     latestConversation,
+//                                     lines.join("\n\n"),
+//                                 );
+
+//                                 await writeFile(
+//                                     conversationFile,
+//                                     JSON.stringify(latestConversation, null, 2),
+//                                     "utf-8",
+//                                 );
                                 
-                            } catch (error) {
-                                console.error(
-                                    "Error during delayed memory seed cleanup:",
-                                    error,
-                                );
-                            } finally {
-                                try {
-                                    await unlink(lockFile);
-                                    console.log("=========lock removed by PM========")
-                                    // Break the cycle, Exit memory save state by resetting to defaults
-                                    if(exitRequested === true) {
-                                        resetPendingSaveMemory();
-                                    }
-                                } catch {
-                                    // ignore
-                                } finally {
-                                    setLockFileOriginatesFromThisPlugin(lockFile, null);
-                                    setPreviousTurnSavingState(true);
-                                }
-                            }
-                        }, delay);
-                    }
-                } catch (error) {
-                    clearInterval(pollForAssistantUpdate);
+//                             } catch (error) {
+//                                 console.error(
+//                                     "Error during delayed memory seed cleanup:",
+//                                     error,
+//                                 );
+//                             } finally {
+//                                 try {
+//                                     await unlink(lockFile);
+//                                     console.log("=========lock removed by PM========")
+//                                     // Break the cycle, Exit memory save state by resetting to defaults
+//                                     if(exitRequested === true) {
+//                                         resetPendingSaveMemory();
+//                                     }
+//                                 } catch {
+//                                     // ignore
+//                                 } finally {
+//                                     setLockFileOriginatesFromThisPlugin(lockFile, null);
+//                                     setPreviousTurnSavingState(true);
+//                                 }
+//                             }
+//                         }, delay);
+//                     }
+//                 } catch (error) {
+//                     clearInterval(pollForAssistantUpdate);
 
-                    console.error(
-                        "Error polling for assistant update:",
-                        error,
-                    );
-                }
-            }, pollInterval);
+//                     console.error(
+//                         "Error polling for assistant update:",
+//                         error,
+//                     );
+//                 }
+//             }, pollInterval);
 
-        } catch (error) {
+//         } catch (error) {
             
-            throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
+//             throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
+//         }
+//     }
+// }
 }
 
-async function editAssistantResponse(
+export async function tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction(
+    exitRequested: boolean,
+    latestConversation: any,
+    pendingSaveMemory: PendingSaveMemory,
+): Promise<void> {
+
+    let lines: string[] = [];
+
+    console.log("exitRequested",exitRequested)
+    // Exit Save Memory State
+    if(exitRequested === true) {
+        lines = (await constructAssistantReplySaveMemoryExit(pendingSaveMemory));
+    } else {
+        // Category or File Name fields missing
+        if(
+            pendingSaveMemory.category === null ||
+            pendingSaveMemory.fileName === null
+        ) {
+            lines = (await constructAssistantReplyForMissingFields(pendingSaveMemory));
+        }
+
+        // Saved Memory
+        if(pendingSaveMemory.category !== null &&
+            pendingSaveMemory.fileName !== null){
+            lines = (await constructAssistantReplySaveMemory(pendingSaveMemory));
+        }
+    }
+    
+    await editAssistantResponse(
+        latestConversation,
+        lines.join("\n\n"),
+    );
+}
+
+export async function editAssistantResponse(
     conversation: any,
     replacementText: string,
 ): Promise<void> {
@@ -472,87 +525,6 @@ async function editAssistantResponse(
     }
 }
 
-async function constructAssistantReplyForMissingFields(
-    pendingSaveMemory: PendingSaveMemory,
-): Promise<string[]>{
-    
-    const lines: string[] = [];
-
-    lines.push(
-        '**Please provide the following missing information with its required prefix:**'
-    );
-
-    if (pendingSaveMemory.category === null) {
-        lines.push(
-            '- Category Name: `category <category_here>`.',
-        );
-    }
-
-    if (pendingSaveMemory.fileName === null) {
-        lines.push(
-            '- Memory Name: `name <name_here>`.',
-        );
-    }
-
-    if (
-        pendingSaveMemory.category === null &&
-        pendingSaveMemory.fileName === null
-    ) {
-        lines.push(
-            '*To provide both together, you may use [ `;`  `,`  `.` ] to separate the missing parameters.*',
-        );
-        lines.push(
-            '**Example:** `category <name_here>; name <name_here>`',
-        );
-    }
-
-    lines.push(
-        '*To forcefully end this save memory attempt say:* `exit save memory`'
-    );
-    
-    return lines;
-}
-
-async function constructAssistantReplySaveMemoryExit(
-    pendingSaveMemory: PendingSaveMemory,
-): Promise<string[]>{
-    
-    const lines: string[] = [];
-
-    lines.push(
-        `Exiting Save Memory Request of **[Message ${pendingSaveMemory.memoryNumber}]**`
-    );
-
-    lines.push(
-        `- Category: ${pendingSaveMemory.category === null
-            ? `[Not Provided]`
-            : pendingSaveMemory.category
-        }`
-    );
-
-    lines.push(
-        `- Memory Name: ${pendingSaveMemory.fileName === null
-            ? `[Not Provided]`
-            : pendingSaveMemory.fileName
-        }`
-    );
-
-    return lines;
-}
-
-async function constructAssistantReplySaveMemory(
-    pendingSaveMemory: PendingSaveMemory,
-): Promise<string[]>{
-    
-    const lines: string[] = [];
-
-    lines.push(
-        `**[Message ${pendingSaveMemory.memoryNumber}]** was successfully saved as ***${pendingSaveMemory.category}/${pendingSaveMemory.fileName}.json***`
-    );
-
-    return lines;
-}
-
 async function saveMemory({
     memoryNumber,
     category,
@@ -602,7 +574,7 @@ async function saveMemory({
         );
 
         // Write to conversation.json a save message content block
-        await requestMissingFieldsAtEndOfConversationJson(false);
+        await appendSaveMemoryTextAtEndOfConversationJson(false);
 
     } catch (error) {
         console.error(
@@ -615,4 +587,85 @@ async function saveMemory({
         setPreviousTurnSavingState(true);
         resetPendingSaveMemory();
     }
+}
+
+export async function constructAssistantReplySaveMemory(
+    pendingSaveMemory: PendingSaveMemory,
+): Promise<string[]>{
+    
+    const lines: string[] = [];
+
+    lines.push(
+        `**[Message ${pendingSaveMemory.memoryNumber}]** was successfully saved as ***${pendingSaveMemory.category}/${pendingSaveMemory.fileName}.json***`
+    );
+
+    return lines;
+}
+
+export async function constructAssistantReplyForMissingFields(
+    pendingSaveMemory: PendingSaveMemory,
+): Promise<string[]>{
+    
+    const lines: string[] = [];
+
+    lines.push(
+        '**Please provide the following missing information with its required prefix:**'
+    );
+
+    if (pendingSaveMemory.category === null) {
+        lines.push(
+            '- Category Name: `category <category_here>`.',
+        );
+    }
+
+    if (pendingSaveMemory.fileName === null) {
+        lines.push(
+            '- Memory Name: `name <name_here>`.',
+        );
+    }
+
+    if (
+        pendingSaveMemory.category === null &&
+        pendingSaveMemory.fileName === null
+    ) {
+        lines.push(
+            '*To provide both together, you may use [ `;`  `,`  `.` ] to separate the missing parameters.*',
+        );
+        lines.push(
+            '**Example:** `category <name_here>; name <name_here>`',
+        );
+    }
+
+    lines.push(
+        '*To forcefully end this save memory attempt say:* `exit save memory`'
+    );
+    
+    return lines;
+}
+
+export async function constructAssistantReplySaveMemoryExit(
+    pendingSaveMemory: PendingSaveMemory,
+): Promise<string[]>{
+    
+    const lines: string[] = [];
+
+    lines.push(
+        `Exiting Save Memory Request of **[Message ${pendingSaveMemory.memoryNumber}]**`
+    );
+
+    lines.push(
+        `- Category: ${pendingSaveMemory.category === null
+            ? `[Not Provided]`
+            : pendingSaveMemory.category
+        }`
+    );
+
+    lines.push(
+        `- Memory Name: ${pendingSaveMemory.fileName === null
+            ? `[Not Provided]`
+            : pendingSaveMemory.fileName
+        }`
+    );
+
+    return lines;
 }

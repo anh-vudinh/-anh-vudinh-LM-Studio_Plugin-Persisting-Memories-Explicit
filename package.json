@@ -1,5 +1,5 @@
 {
-  "name": "lms-plugin-persisting-memories",
+  "name": "lms-plugin-persisting-memories-explicit",
   "version": "1.0.0",
   "description": "LM Studio plugin to create memory seeds to carry forward into a new conversation.",
   "main": "index.js",

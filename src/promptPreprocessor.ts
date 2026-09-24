@@ -5,9 +5,12 @@ import { memoryStore } from "./memoryStore";
 import { removeMemorySeeds } from "./removeMemorySeeds";
 import { join, basename } from "node:path";
 import { processMessage } from "./triggerSaveMemory"
+import { multiEditCoordinator } from "./multiEditCoordinator";
 import path from "node:path";
 
 import {
+    addConversationOperation,
+    getConversationOperations,
     getPreviousTurnSavingState,
     getLockFileOriginatesFromThisPlugin,
     getPendingSaveMemory,
@@ -127,7 +130,15 @@ export async function promptPreprocessor(
         previousTurnState === false) ||
         previousTurnState === null
     ) {
-        console.log("==========ran the number append", previousTurnState)
+        // if(getConversationFunctionsToExecute().length === 0){
+        //     await promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
+        //         conversationFileName,
+        //         assistantIndex,
+        //     );
+        // }else{
+        //     addConversationFunctionToExecute("promptProcessorAppendNewAssistantMessageToEndOfConversationJson");
+        // }
+
         await promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
             conversationFileName,
             assistantIndex,
@@ -194,7 +205,10 @@ export async function promptPreprocessor(
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
 
-    if(memorySeedsSelected.length === 0 && areSeedsDetectedInHistory === true) {
+    if(
+        memorySeedsSelected.length === 0 && 
+        areSeedsDetectedInHistory === true
+    ) {
 
         cleanupAllSeeds = true;
 
@@ -206,6 +220,8 @@ export async function promptPreprocessor(
         );
 
         injectedMemorySeeds = [];
+
+        // addConversationFunctionToExecute("promptProcessorRemoveSeeds");
     }
 
     // Remove specific memory seeds the user no longer wants
@@ -220,10 +236,14 @@ export async function promptPreprocessor(
             validMemorySeedsSelected, 
             cleanupAllSeeds
         );
+
+        // addConversationFunctionToExecute("promptProcessorRemoveSeeds");
     }
 
-    
-
+    // if(getConversationOperations().length >= 1) {
+    //     await multiEditCoordinator(false);
+    // }
+    await multiEditCoordinator(false);
     // MESSAGE WITH MEMORIES
     if (injectedContext) {
         if(pendingSaveMemoryState.active === true) {
@@ -914,11 +934,10 @@ async function promptProcessorRemoveSeeds(
     // Second check to make sure there's actually something to remove
     if(memorySeedsToRemove.length > 0) {
 
-        injectedMemorySeeds = await removeMemorySeeds(conversationFileName, validMemorySeedsSelected, memorySeedsToRemove, cleanupAllSeeds);
-
+        await removeMemorySeeds(conversationFileName, validMemorySeedsSelected, memorySeedsToRemove, cleanupAllSeeds);
     }
 
-    return injectedMemorySeeds;
+    return validMemorySeedsSelected;
 }
 
 /**
@@ -1327,123 +1346,132 @@ async function promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
     assistantIndex: number,
 ): Promise<void> {
 
-    const rootDirectory = await memoryStore.getRootDirectory();
+    addConversationOperation(
+        "promptProcessorConstructMessageNumberTag",
+        {
+            assistantIndex,
+        },
+    );
+//     console.log("=================getconvoop", getConversationOperations().length);
+//     const rootDirectory = await memoryStore.getRootDirectory();
+// if(getConversationOperations().length === 1){
+//     try{
+//         // Construct the path to the conversation file
+//         const conversationDirectory = join(
+//             rootDirectory,
+//             "conversations"
+//         );
 
-    try{
-        // Construct the path to the conversation file
-        const conversationDirectory = join(
-            rootDirectory,
-            "conversations"
-        );
-
-        const conversationFile = join(
-            conversationDirectory,
-            normalizeJsonFileName(conversationFileName),
-        );
+//         const conversationFile = join(
+//             conversationDirectory,
+//             normalizeJsonFileName(conversationFileName),
+//         );
         
-        // Prepare json file to be readable and assign to variable
-        const conversationJson = await readFile(
-            conversationFile,
-            "utf-8",
-        );
+//         // Prepare json file to be readable and assign to variable
+//         const conversationJson = await readFile(
+//             conversationFile,
+//             "utf-8",
+//         );
 
-        const conversation = JSON.parse(conversationJson);
+//         const conversation = JSON.parse(conversationJson);
         
-        // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
-        const originalAssistantLastMessagedAt =
-            conversation.assistantLastMessagedAt;
+//         // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
+//         const originalAssistantLastMessagedAt =
+//             conversation.assistantLastMessagedAt;
 
-        const lockFile = `${conversationFile}.lock`;
+//         const lockFile = `${conversationFile}.lock`;
 
-        await acquireLock(lockFile);
+//         await acquireLock(lockFile);
 
-        const lockOriginatesFromThisPlugin =
-            getLockFileOriginatesFromThisPlugin(lockFile);
+//         const lockOriginatesFromThisPlugin =
+//             getLockFileOriginatesFromThisPlugin(lockFile);
 
-        const pollInterval = lockOriginatesFromThisPlugin === false
-                ? 100
-                : 500;
+//         const pollInterval = lockOriginatesFromThisPlugin === false
+//                 ? 100
+//                 : 500;
 
-        // Initiated polling until assistantLastMessagedAt value changes
-        // then initiate the conversation json overwrite
-        const pollForAssistantUpdate = setInterval(async () => {
-            try {
-                const latestJson = await readFile(
-                    conversationFile,
-                    "utf-8",
-                );
+//         // Initiated polling until assistantLastMessagedAt value changes
+//         // then initiate the conversation json overwrite
+//         const pollForAssistantUpdate = setInterval(async () => {
+//             try {
+//                 const latestJson = await readFile(
+//                     conversationFile,
+//                     "utf-8",
+//                 );
 
-                const latestConversation = JSON.parse(latestJson);
+//                 const latestConversation = JSON.parse(latestJson);
 
-                if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
+//                 if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
 
-                    clearInterval(pollForAssistantUpdate);
+//                     clearInterval(pollForAssistantUpdate);
 
-                    // false = another plugin created the lock → 20ms
-                    // true/null = this plugin created it or no lock was present → 2000ms
-                    const delay =
-                        getLockFileOriginatesFromThisPlugin(lockFile) === false
-                            ? 100
-                            : 2000;
+//                     // false = another plugin created the lock → 20ms
+//                     // true/null = this plugin created it or no lock was present → 2000ms
+//                     const delay =
+//                         getLockFileOriginatesFromThisPlugin(lockFile) === false
+//                             ? 100
+//                             : 2000;
                 
-                    // This timeout is to circumvent LM Studio's behavior
-                    setTimeout(async () => {
-                        try {
-                            const latestJson = await readFile(
-                                conversationFile,
-                                "utf-8",
-                            );
+//                     // This timeout is to circumvent LM Studio's behavior
+//                     setTimeout(async () => {
+//                         try {
+//                             const latestJson = await readFile(
+//                                 conversationFile,
+//                                 "utf-8",
+//                             );
 
-                            const latestConversation = JSON.parse(latestJson);
+//                             const latestConversation = JSON.parse(latestJson);
 
-                            // INSERT MESSAGE # OBJECT
-                            await promptProcessorConstructMessageNumberTag(
-                                latestConversation,
-                                assistantIndex,
-                            );
+//                             // INSERT MESSAGE # OBJECT
+//                             promptProcessorConstructMessageNumberTag(
+//                                 latestConversation,
+//                                 assistantIndex,
+//                             );
 
-                            await writeFile(
-                                conversationFile,
-                                JSON.stringify(latestConversation, null, 2),
-                                "utf-8",
-                            );
+//                             await writeFile(
+//                                 conversationFile,
+//                                 JSON.stringify(latestConversation, null, 2),
+//                                 "utf-8",
+//                             );
                             
-                        } catch (error) {
-                            console.error(
-                                "Error during delayed memory seed cleanup:",
-                                error,
-                            );
-                        } finally {
-                            try {
-                                await unlink(lockFile);
-                            } catch {
-                                // ignore
-                            } finally {
-                                setLockFileOriginatesFromThisPlugin(lockFile, null);
-                            }
-                        }
-                    }, delay);
-                }
-            } catch (error) {
-                clearInterval(pollForAssistantUpdate);
+//                         } catch (error) {
+//                             console.error(
+//                                 "Error during delayed memory seed cleanup:",
+//                                 error,
+//                             );
+//                         } finally {
+//                             try {
+//                                 await unlink(lockFile);
+//                             } catch {
+//                                 // ignore
+//                             } finally {
+//                                 setLockFileOriginatesFromThisPlugin(lockFile, null);
+//                             }
+//                         }
+//                     }, delay);
+//                 }
+//             } catch (error) {
+//                 clearInterval(pollForAssistantUpdate);
 
-                console.error(
-                    "Error polling for assistant update:",
-                    error,
-                );
-            }
-        }, pollInterval);
+//                 console.error(
+//                     "Error polling for assistant update:",
+//                     error,
+//                 );
+//             }
+//         }, pollInterval);
 
-    } catch (error) {
+//     } catch (error) {
         
-        throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
-    }
+//         throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
+//     }
+// }
 }
 
-function promptProcessorConstructMessageNumberTag(
+export function promptProcessorConstructMessageNumberTag(
     conversation: any,
     assistantIndex: number,
 ): void {
+
     // Find the last assistant message
     const assistantMessage = [...conversation.messages]
         .reverse()
