@@ -1,11 +1,12 @@
 import { createConfigSchematics } from "@lmstudio/sdk";
 import { normalizeJsonFileName } from "./promptPreprocessor"
+import type { PromptPreprocessorController } from "@lmstudio/sdk";
+import { getMemorySeedsPool } from "./memorySession";
+import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
 
 let currentMemorySeedsPool: readonly string[] = [];
 let currentMemorySeedsSelected: readonly string[] = [];
 let currentConversationFileName = "";
-let saveMemoryNumber: number | null = null;
-const lockFileOwnership = new Map<string, boolean | null>();
 
 export function createConfig(
     memorySeedsPool: readonly string[],
@@ -93,13 +94,33 @@ export function setConfigSchematics({
     );
 }
 
-export function setSaveMemoryNumber(value: number | null): void {
-    saveMemoryNumber = value;
+// ============================================================
+// Config Getters sharing access to ctl
+// ============================================================
+
+let ctl: PromptPreprocessorController;
+
+export function setController(controller: PromptPreprocessorController): void {
+    ctl = controller;
 }
 
-export function getSaveMemoryNumber(): number | null {
-    return saveMemoryNumber;
+export function getController(): PromptPreprocessorController {
+    return ctl;
 }
+
+// export function setCurrentConversationFileName(value: string): void {
+//     currentConversationFileName = value;
+// }
+
+export function getCurrentConversationFileName(): string {
+    return currentConversationFileName;
+}
+
+// ============================================================
+// Lock File Origin States
+// ============================================================
+
+const lockFileOwnership = new Map<string, boolean | null>();
 
 export function setLockFileOriginatesFromThisPlugin(
     lockFile: string,
@@ -112,4 +133,44 @@ export function getLockFileOriginatesFromThisPlugin(
     lockFile: string,
 ): boolean | null {
     return lockFileOwnership.get(lockFile) ?? null;
+}
+
+// ============================================================
+// SAVE MEMORY STATE
+// ============================================================
+
+export interface PendingSaveMemory {
+    active: boolean;
+    memoryNumber: number | null;
+    category: string | null;
+    fileName: string | null;
+}
+
+let pendingSaveMemory: PendingSaveMemory = {
+    active: false,
+    memoryNumber: null,
+    category: null,
+    fileName: null,
+};
+
+export function getPendingSaveMemory(): PendingSaveMemory {
+    return { ...pendingSaveMemory };
+}
+
+export function setPendingSaveMemory(
+    updates: Partial<PendingSaveMemory>,
+): void {
+    pendingSaveMemory = {
+        ...pendingSaveMemory,
+        ...updates,
+    };
+}
+
+export function resetPendingSaveMemory(): void {
+    pendingSaveMemory = {
+        active: false,
+        memoryNumber: null,
+        category: null,
+        fileName: null,
+    };
 }

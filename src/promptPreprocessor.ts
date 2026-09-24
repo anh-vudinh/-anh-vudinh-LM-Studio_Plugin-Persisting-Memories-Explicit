@@ -4,14 +4,15 @@ import { isEligibleAssistantMessage } from "./conversationReader";
 import { memoryStore } from "./memoryStore";
 import { removeMemorySeeds } from "./removeMemorySeeds";
 import { join, basename } from "node:path";
+import { processMessage } from "./triggerSaveMemory"
 import path from "node:path";
 
 import {
+    getPendingSaveMemory,
+    setController,
     configSchematics,
     setConfigSchematics,
-    setSaveMemoryNumber,
     setLockFileOriginatesFromThisPlugin,
-    getLockFileOriginatesFromThisPlugin
 } from "./config";
 
 import { 
@@ -33,7 +34,7 @@ let injectedMemorySeeds: string[] | null = null;
 let cleanupAllSeeds: boolean;
 let internalChatID = "";
 const relationshipsLimit = 15;
-const LOCK_TIMEOUT_MS = 7_000;
+const LOCK_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 100;
 
 /**
@@ -59,23 +60,14 @@ export async function promptPreprocessor(
     const userText = userMessage.getText();
     const workingDirectory = ctl.getWorkingDirectory();
     let createNewInternalChatID = false;
-
-    const saveMemoryMatch = userText.match(
-        /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b\s*(\d+)/i,
-    );
-
-    if (saveMemoryMatch) {
-        setSaveMemoryNumber(Number(saveMemoryMatch[1]));
-    }
+    setController(ctl);
 
     // Assume values can be lost during future runs because of random plugin reinitialization
-
     const foundHistoryChatID = await promptProcessorScanHistoryForID(messages);
 
     // ICID exist in history still
     if (foundHistoryChatID !== "") {
         internalChatID = foundHistoryChatID;
-
     }
 
     // ICID not in memory or history
@@ -94,7 +86,6 @@ export async function promptPreprocessor(
         if (internalChatID !== "") {
             createNewInternalChatID = true;
         }
-
     }
 
     // If we still do not know InternalChatID after the recovery
@@ -116,7 +107,11 @@ export async function promptPreprocessor(
 
         conversationFileName = normalizeJsonFileName(conversationFileName);
     }
-    
+
+    // testing userText if it's a memory command and extracting key variables,
+    // taking the power away from unreliable tools from determining this.
+    await processMessage(userText);
+
     // Cleaning up whitespaces only, not misspellings
     const normalizedMemorySeedsSelected =
         memorySeedsSelected.map(
@@ -181,7 +176,7 @@ export async function promptPreprocessor(
 
     // Remove number instruction during save memory request. Dumb assistants have shown
     // to believe the format requirement is a second message save request
-    let numberingInstruction = "";
+    //let numberingInstruction = "";
 
     // const saveMemoryMatch = userText.match(
     //     /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b\s*(\d+)/i,
@@ -192,17 +187,32 @@ export async function promptPreprocessor(
     //     setConfigSchematics({conversationFileName: normalizeJsonFileName(conversationFileName)});
     // }
 
+
+//     messages.forEach((m, i) => {
+//   console.log(`[history ${i}]`, {
+//     role: m.getRole(),
+//     text: m.getText(),
+//     toolCalls: m.getToolCallRequests().map(r => ({
+//       name: r.name,
+//       arguments: r.arguments,
+//     })),
+//     toolResults: m.getToolCallResults(),
+//     raw: m,
+//   });
+// });
+
     // Append full numbering instruction only once if not done yet
-    if (await promptProcessorScanHistoryForNumberingInstruction(messages) === false) {
+    // if (await promptProcessorScanHistoryForNumberingInstruction(messages) === false) {
 
-        numberingInstruction = 
-            `Formatting Instruction: Help the user identify what current assistant turn it is by appending **message <##>** at the end of each assistant's response on it's own separate line. `+
-            `:End of Instruction.`;
+    //     numberingInstruction = 
+    //         `Formatting Instruction: Help the user identify what current assistant turn it is by appending the current assistant's turn as **message <##>** at the end of each assistant's response on it's own separate line. `+
+    //         `:End of Instruction.`;
 
-    } else {
+    // } else {
 
-        // numberingInstruction = `[ADD_MN_${assistantIndex}]`;
-    }
+    //     numberingInstruction = `[ADD_MN_${assistantIndex}]`;
+    // }
+    //console.log("numberingInstruction===============",`[ADD_MN_${assistantIndex}]`);
     
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
@@ -235,19 +245,38 @@ export async function promptPreprocessor(
         );
     }
 
+    const pendingSaveMemoryState = getPendingSaveMemory().active;
+
+    // MESSAGE WITH MEMORIES
     if (injectedContext) {
+        if(pendingSaveMemoryState === true) {
+            return (
+                `${userText}.            ` +
+                "System: the user is trying to save a memory, give a short reply 'pending save memory...'." +
+                `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
+            )
+        };
 
         return (
             `${userText}.            ` +
             `${injectedContext}[END OF MEMORIES] ` +
-            `${numberingInstruction}` +
+            // `${numberingInstruction}` +
+            `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
+        );
+    }
+
+    // NORMAL MESSAGE
+    if(pendingSaveMemoryState === true) {
+        return (
+            `${userText}.            ` +
+            "System: the user is trying to save a memory, give a short reply 'pending save memory...'." +
             `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
         );
     }
 
     return (
         `${userText}.            ` +
-        `${numberingInstruction}` +
+        // `${numberingInstruction}` +
         `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
     );
 }
@@ -1258,14 +1287,14 @@ async function findAllConversationFiles(
  * False = there was another lock exisiting before this plugin could acquire it
  */
 export async function acquireLock(
-    lockFile: string
+    lockFile: string,
 ): Promise<void> {
 
     const startedAt = Date.now();
 
     while (true) {
 
-        if (Date.now() - startedAt >= 15_000) {
+        if (Date.now() - startedAt >= 20_000) {
             throw new Error(
                 `Timed out waiting for lock: ${lockFile}`,
             );

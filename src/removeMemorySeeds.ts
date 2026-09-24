@@ -1,7 +1,6 @@
 import { memoryStore } from "./memoryStore";
 import { join, } from "node:path";
-import { writeFile, readFile, unlink, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { writeFile, readFile, unlink } from "node:fs/promises";
 import { removeMemorySeedFromSelected, updateMemorySeedsSelected } from "./memorySession";
 import { 
     setConfigSchematics,

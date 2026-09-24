@@ -5,8 +5,6 @@ import path from "node:path";
 
 import {
     setConfigSchematics,
-    setSaveMemoryNumber,
-    getSaveMemoryNumber,
     setLockFileOriginatesFromThisPlugin
 } from "./config";
 
@@ -140,12 +138,12 @@ export class MemoryStore {
         name: string,
         seed: MemorySeed,
         lockFile: string,
+        saveMemoryNumber: number,
     ): Promise<void> {
         const directory = await this.initializeAndGetDirectory();
 
         const safeCategory = sanitizePathPart(category);
         const safeName = sanitizeFilename(name);
-        const saveMemoryNumber = getSaveMemoryNumber();
 
         if(saveMemoryNumber === null) {
             throw new Error("Memory save message number is invalid.");
@@ -235,7 +233,7 @@ export class MemoryStore {
         }
 
         // resets the saveMemoryNumber to it's default
-        setSaveMemoryNumber(null);
+        // setSaveMemoryNumber(null);
 
         // remove lockfile
         try {

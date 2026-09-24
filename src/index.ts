@@ -1,6 +1,6 @@
 import { PluginContext } from "@lmstudio/sdk";
-import { toolsProvider } from "./toolsProvider";
 import { promptPreprocessor } from "./promptPreprocessor";
+import { toolsProvider } from "./toolsProvider";
 import { memoryStore } from "./memoryStore";
 import { readdir } from "fs/promises";
 import { initializeMemorySeedsPool } from "./memorySession";
@@ -79,9 +79,9 @@ export async function main(context: PluginContext) {
     // first population of the config values
     setConfigSchematics({memorySeedsPool: memorySeedsPool});
 
-    context.withConfigSchematics(configSchematics);
     context.withToolsProvider(toolsProvider);
     context.withPromptPreprocessor(promptPreprocessor);
+    context.withConfigSchematics(configSchematics);
 
     console.log("Memory Seed Plugin initialized");
 }
