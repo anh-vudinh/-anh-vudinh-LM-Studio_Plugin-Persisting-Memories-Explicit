@@ -8,11 +8,14 @@ import { processMessage } from "./triggerSaveMemory"
 import path from "node:path";
 
 import {
+    getPreviousTurnSavingState,
+    getLockFileOriginatesFromThisPlugin,
     getPendingSaveMemory,
     setController,
     configSchematics,
     setConfigSchematics,
     setLockFileOriginatesFromThisPlugin,
+    setPreviousTurnSavingState,
 } from "./config";
 
 import { 
@@ -112,6 +115,26 @@ export async function promptPreprocessor(
     // taking the power away from unreliable tools from determining this.
     await processMessage(userText);
 
+    const pendingSaveMemoryState = getPendingSaveMemory();
+    
+    // Model appends message # at the end of the it's response
+    // prerequisite to instructing to save memory
+    const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
+
+    const previousTurnState =  getPreviousTurnSavingState();
+
+    if((pendingSaveMemoryState.active === false &&
+        previousTurnState === false) ||
+        previousTurnState === null
+    ) {
+        console.log("==========ran the number append", previousTurnState)
+        await promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
+            conversationFileName,
+            assistantIndex,
+        );
+        setPreviousTurnSavingState(null);
+    }
+
     // Cleaning up whitespaces only, not misspellings
     const normalizedMemorySeedsSelected =
         memorySeedsSelected.map(
@@ -168,52 +191,6 @@ export async function promptPreprocessor(
         injectedContext = await promptProcessorConstructMemoriesToInject(newMemorySeeds, memoriesDirectory);
     }
 
-    // Create the memories string to inject
-
-    // Model appends message # at the end of the it's response
-    // prerequisite to instructing to save memory
-    const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
-
-    // Remove number instruction during save memory request. Dumb assistants have shown
-    // to believe the format requirement is a second message save request
-    //let numberingInstruction = "";
-
-    // const saveMemoryMatch = userText.match(
-    //     /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b\s*(\d+)/i,
-    // );
-
-    // if (saveMemoryMatch) {
-    //     setSaveMemoryNumber(Number(saveMemoryMatch[1]));
-    //     setConfigSchematics({conversationFileName: normalizeJsonFileName(conversationFileName)});
-    // }
-
-
-//     messages.forEach((m, i) => {
-//   console.log(`[history ${i}]`, {
-//     role: m.getRole(),
-//     text: m.getText(),
-//     toolCalls: m.getToolCallRequests().map(r => ({
-//       name: r.name,
-//       arguments: r.arguments,
-//     })),
-//     toolResults: m.getToolCallResults(),
-//     raw: m,
-//   });
-// });
-
-    // Append full numbering instruction only once if not done yet
-    // if (await promptProcessorScanHistoryForNumberingInstruction(messages) === false) {
-
-    //     numberingInstruction = 
-    //         `Formatting Instruction: Help the user identify what current assistant turn it is by appending the current assistant's turn as **message <##>** at the end of each assistant's response on it's own separate line. `+
-    //         `:End of Instruction.`;
-
-    // } else {
-
-    //     numberingInstruction = `[ADD_MN_${assistantIndex}]`;
-    // }
-    //console.log("numberingInstruction===============",`[ADD_MN_${assistantIndex}]`);
-    
     // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
 
@@ -245,11 +222,11 @@ export async function promptPreprocessor(
         );
     }
 
-    const pendingSaveMemoryState = getPendingSaveMemory().active;
+    
 
     // MESSAGE WITH MEMORIES
     if (injectedContext) {
-        if(pendingSaveMemoryState === true) {
+        if(pendingSaveMemoryState.active === true) {
             return (
                 `${userText}.            ` +
                 "System: the user is trying to save a memory, give a short reply 'pending save memory...'." +
@@ -260,13 +237,12 @@ export async function promptPreprocessor(
         return (
             `${userText}.            ` +
             `${injectedContext}[END OF MEMORIES] ` +
-            // `${numberingInstruction}` +
             `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
         );
     }
 
     // NORMAL MESSAGE
-    if(pendingSaveMemoryState === true) {
+    if(pendingSaveMemoryState.active === true) {
         return (
             `${userText}.            ` +
             "System: the user is trying to save a memory, give a short reply 'pending save memory...'." +
@@ -276,7 +252,6 @@ export async function promptPreprocessor(
 
     return (
         `${userText}.            ` +
-        // `${numberingInstruction}` +
         `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
     );
 }
@@ -1341,5 +1316,203 @@ export async function acquireLock(
                 setTimeout(resolve, POLL_INTERVAL_MS),
             );
         }
+    }
+}
+
+/**
+ * 
+ */
+async function promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
+    conversationFileName: string,
+    assistantIndex: number,
+): Promise<void> {
+
+    const rootDirectory = await memoryStore.getRootDirectory();
+
+    try{
+        // Construct the path to the conversation file
+        const conversationDirectory = join(
+            rootDirectory,
+            "conversations"
+        );
+
+        const conversationFile = join(
+            conversationDirectory,
+            normalizeJsonFileName(conversationFileName),
+        );
+        
+        // Prepare json file to be readable and assign to variable
+        const conversationJson = await readFile(
+            conversationFile,
+            "utf-8",
+        );
+
+        const conversation = JSON.parse(conversationJson);
+        
+        // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
+        const originalAssistantLastMessagedAt =
+            conversation.assistantLastMessagedAt;
+
+        const lockFile = `${conversationFile}.lock`;
+
+        await acquireLock(lockFile);
+
+        const lockOriginatesFromThisPlugin =
+            getLockFileOriginatesFromThisPlugin(lockFile);
+
+        const pollInterval = lockOriginatesFromThisPlugin === false
+                ? 100
+                : 500;
+
+        // Initiated polling until assistantLastMessagedAt value changes
+        // then initiate the conversation json overwrite
+        const pollForAssistantUpdate = setInterval(async () => {
+            try {
+                const latestJson = await readFile(
+                    conversationFile,
+                    "utf-8",
+                );
+
+                const latestConversation = JSON.parse(latestJson);
+
+                if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
+
+                    clearInterval(pollForAssistantUpdate);
+
+                    // false = another plugin created the lock → 20ms
+                    // true/null = this plugin created it or no lock was present → 2000ms
+                    const delay =
+                        getLockFileOriginatesFromThisPlugin(lockFile) === false
+                            ? 100
+                            : 2000;
+                
+                    // This timeout is to circumvent LM Studio's behavior
+                    setTimeout(async () => {
+                        try {
+                            const latestJson = await readFile(
+                                conversationFile,
+                                "utf-8",
+                            );
+
+                            const latestConversation = JSON.parse(latestJson);
+
+                            // INSERT MESSAGE # OBJECT
+                            await promptProcessorConstructMessageNumberTag(
+                                latestConversation,
+                                assistantIndex,
+                            );
+
+                            await writeFile(
+                                conversationFile,
+                                JSON.stringify(latestConversation, null, 2),
+                                "utf-8",
+                            );
+                            
+                        } catch (error) {
+                            console.error(
+                                "Error during delayed memory seed cleanup:",
+                                error,
+                            );
+                        } finally {
+                            try {
+                                await unlink(lockFile);
+                            } catch {
+                                // ignore
+                            } finally {
+                                setLockFileOriginatesFromThisPlugin(lockFile, null);
+                            }
+                        }
+                    }, delay);
+                }
+            } catch (error) {
+                clearInterval(pollForAssistantUpdate);
+
+                console.error(
+                    "Error polling for assistant update:",
+                    error,
+                );
+            }
+        }, pollInterval);
+
+    } catch (error) {
+        
+        throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+function promptProcessorConstructMessageNumberTag(
+    conversation: any,
+    assistantIndex: number,
+): void {
+    // Find the last assistant message
+    const assistantMessage = [...conversation.messages]
+        .reverse()
+        .find((message: any) =>
+            message.versions?.[
+                message.currentlySelected ?? 0
+            ]?.role === "assistant",
+        );
+
+    if (!assistantMessage) {
+        throw new Error("No assistant message found.");
+    }
+
+    // Get the last version
+    const assistantVersion =
+        assistantMessage?.versions?.[
+            assistantMessage.currentlySelected ?? 0
+        ];
+     
+    if (!assistantVersion) {
+        throw new Error("Assistant message has no versions.");
+    }
+
+    // Find debugInfoBlock
+    const debugInfoIndex = assistantVersion.steps.findIndex(
+        (step: any) => step.type === "debugInfoBlock",
+    );
+
+    //const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
+
+    // Create the new content block
+    const markerBlock = {
+        type: "contentBlock",
+        stepIdentifier: String(Date.now()),
+        content: [
+            {
+            type: "text",
+            text: `\n\n***message ${assistantIndex}***`,
+            fromDraftModel: false,
+            tokensCount: 1,
+            isStructural: false,
+            },
+        ],
+        defaultShouldIncludeInContext: false,
+        shouldIncludeInContext: false,
+        };
+
+        const markerExists = assistantVersion.steps.some(
+        (step: any) =>
+            step.type === "contentBlock" &&
+            step.content?.some(
+                (contentBlock: any) =>
+                    contentBlock.type === "text" &&
+                    contentBlock.text === `\n\n***message ${assistantIndex}***`,
+            ),
+    );
+
+    // Try to add marker block object before debug.
+    // If that doesn't exist just add after the last role: assistant content block.
+    const insertIndex =
+        debugInfoIndex !== -1
+            ? debugInfoIndex
+            : assistantVersion.steps.length;
+
+    if (!markerExists) {
+        assistantVersion.steps.splice(
+            insertIndex,
+            0,
+            markerBlock,
+        );
     }
 }

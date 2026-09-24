@@ -1,8 +1,6 @@
 import { createConfigSchematics } from "@lmstudio/sdk";
 import { normalizeJsonFileName } from "./promptPreprocessor"
 import type { PromptPreprocessorController } from "@lmstudio/sdk";
-import { getMemorySeedsPool } from "./memorySession";
-import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
 
 let currentMemorySeedsPool: readonly string[] = [];
 let currentMemorySeedsSelected: readonly string[] = [];
@@ -173,4 +171,14 @@ export function resetPendingSaveMemory(): void {
         category: null,
         fileName: null,
     };
+}
+
+let previousSavingState: boolean | null = null;
+
+export function setPreviousTurnSavingState(value: boolean | null): void {
+    previousSavingState = value;
+}
+
+export function getPreviousTurnSavingState(): boolean | null {
+    return previousSavingState;
 }

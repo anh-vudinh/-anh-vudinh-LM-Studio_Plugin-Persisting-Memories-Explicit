@@ -1,12 +1,11 @@
 import { Tool, ToolsProviderController } from "@lmstudio/sdk";
 import { getMemorySeedsPool } from "./memorySession";
 import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
-
 import { configSchematics } from "./config";
 
 /**
-* ToolsProvider does not have much responsibility. Just to interpret when the user
-* requests to save a memory. The plugin's heavy lifting is in prompt preprocessor
+* ToolsProvider is serves only one purpose to listen for when user puts a memory to
+* delete into the control panel
 */
 export async function toolsProvider(
   ctl: ToolsProviderController

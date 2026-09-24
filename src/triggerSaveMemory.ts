@@ -7,6 +7,7 @@ import { writeFile, readFile, unlink } from "node:fs/promises";
 import { isEligibleAssistantMessage } from "./conversationReader"
 
 import {
+    setPreviousTurnSavingState,
     getController,
     getCurrentConversationFileName,
     setPendingSaveMemory,
@@ -87,6 +88,7 @@ export async function processMessage(
             active: true,
             memoryNumber: Number(saveMatch[1]),
         });
+        setPreviousTurnSavingState(true);
     }
 
     // --------------------------------------------------------
@@ -105,6 +107,7 @@ export async function processMessage(
     const current = getPendingSaveMemory();
 
     if (!current.active) {
+        setPreviousTurnSavingState(null);
         return {
             action: "none",
         };
@@ -182,12 +185,6 @@ export async function processMessage(
             },
         );
 
-        // ----------------------------------------------------
-        // Reset state after successful save.
-        // ----------------------------------------------------
-
-        resetPendingSaveMemory();
-
         return {
             action: "saved",
         };
@@ -198,7 +195,7 @@ export async function processMessage(
     // STILL WAITING FOR SOMETHING
     // ========================================================
 
-    await appendNewAssistantMessageToEndOfConversationJson(exitRequested);
+    await requestMissingFieldsAtEndOfConversationJson(exitRequested);
 
     return {
         action: "waiting",
@@ -213,7 +210,7 @@ export async function processMessage(
     };
 }
 
-async function appendNewAssistantMessageToEndOfConversationJson(
+async function requestMissingFieldsAtEndOfConversationJson(
     exitRequested: boolean,
 ): Promise<void> {
 
@@ -335,7 +332,7 @@ async function appendNewAssistantMessageToEndOfConversationJson(
                             } finally {
                                 try {
                                     await unlink(lockFile);
-
+                                    console.log("=========lock removed by PM========")
                                     // Break the cycle, Exit memory save state by resetting to defaults
                                     if(exitRequested === true) {
                                         resetPendingSaveMemory();
@@ -344,6 +341,7 @@ async function appendNewAssistantMessageToEndOfConversationJson(
                                     // ignore
                                 } finally {
                                     setLockFileOriginatesFromThisPlugin(lockFile, null);
+                                    setPreviousTurnSavingState(true);
                                 }
                             }
                         }, delay);
@@ -474,69 +472,6 @@ async function editAssistantResponse(
     }
 }
 
-async function saveMemory({
-    memoryNumber,
-    category,
-    fileName
-}: {
-    memoryNumber: number,
-    category: string,
-    fileName: string,
-}): Promise<void> {
-
-    // Create lockfile so current history isn't overwritten while saving
-    const conversationDirectory = join(
-        await memoryStore.getRootDirectory(),
-        "conversations"
-    );
-
-    const conversationFile = join(
-        conversationDirectory,
-        normalizeJsonFileName(getCurrentConversationFileName()),
-    );
-
-    const lockFile = `${conversationFile}.lock`;
-
-    const ctl = getController();
-
-    try {
-        const history = await getCurrentConversationHistory();
-
-        // Start the memory saving
-        const association = await associateAssistantResponse(
-            ctl.client,
-            history,
-            memoryNumber,
-        );
-
-        await memoryStore.saveSeed(
-            category,
-            fileName,
-            {
-                date: new Date().toISOString(),
-                root_input: association.rootInput,
-                direct_input: association.directInput,
-                output: association.assistantResponse,
-            },
-            lockFile,
-            memoryNumber,
-        );
-
-        // Write to conversation.json a save message content block
-        await appendNewAssistantMessageToEndOfConversationJson(false);
-
-    } catch (error) {
-        console.error(
-            "Error creating Memory Seed: " +
-            `${error instanceof Error ? error.message : String(error)}`
-        );
-
-    } finally {
-        // Reset state for new tool calls
-        resetPendingSaveMemory();
-    }
-}
-
 async function constructAssistantReplyForMissingFields(
     pendingSaveMemory: PendingSaveMemory,
 ): Promise<string[]>{
@@ -612,8 +547,72 @@ async function constructAssistantReplySaveMemory(
     const lines: string[] = [];
 
     lines.push(
-        `**[Message ${pendingSaveMemory.memoryNumber}]** was successfully saved as ***${pendingSaveMemory.category}/${pendingSaveMemory.fileName}***`
+        `**[Message ${pendingSaveMemory.memoryNumber}]** was successfully saved as ***${pendingSaveMemory.category}/${pendingSaveMemory.fileName}.json***`
     );
 
     return lines;
+}
+
+async function saveMemory({
+    memoryNumber,
+    category,
+    fileName
+}: {
+    memoryNumber: number,
+    category: string,
+    fileName: string,
+}): Promise<void> {
+
+    // Create lockfile so current history isn't overwritten while saving
+    const conversationDirectory = join(
+        await memoryStore.getRootDirectory(),
+        "conversations"
+    );
+
+    const conversationFile = join(
+        conversationDirectory,
+        normalizeJsonFileName(getCurrentConversationFileName()),
+    );
+
+    const lockFile = `${conversationFile}.lock`;
+
+    const ctl = getController();
+
+    try {
+        const history = await getCurrentConversationHistory();
+
+        // Start the memory saving
+        const association = await associateAssistantResponse(
+            ctl.client,
+            history,
+            memoryNumber,
+        );
+
+        await memoryStore.saveSeed(
+            category,
+            fileName,
+            {
+                date: new Date().toISOString(),
+                root_input: association.rootInput,
+                direct_input: association.directInput,
+                output: association.assistantResponse,
+            },
+            lockFile,
+            memoryNumber,
+        );
+
+        // Write to conversation.json a save message content block
+        await requestMissingFieldsAtEndOfConversationJson(false);
+
+    } catch (error) {
+        console.error(
+            "Error creating Memory Seed: " +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+
+    } finally {
+        // Reset state for new tool calls
+        setPreviousTurnSavingState(true);
+        resetPendingSaveMemory();
+    }
 }
