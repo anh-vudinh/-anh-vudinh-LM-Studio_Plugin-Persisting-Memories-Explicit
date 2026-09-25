@@ -1,14 +1,14 @@
 import { memoryStore } from "./memoryStore";
 import { join } from "node:path";
+import { tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction } from "./triggerSaveMemory";
+import { tryRemoveMemorySeedsTimeoutFunction } from "./removeMemorySeeds";
+
 import {
     normalizeJsonFileName,
     acquireLock,
     promptProcessorConstructMessageNumberTag
 } from "./promptPreprocessor";
 
-import { tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction } from "./triggerSaveMemory";
-
-import { tryRemoveMemorySeedsTimeoutFunction } from "./removeMemorySeeds";
 
 import { 
     readFile, 
@@ -110,7 +110,7 @@ export async function multiEditCoordinator(
                                 // Save Memory Path
                                 // ============================================================
                                 if (operation.name === "tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction") {
-                                    console.log("=====tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction=====");
+
                                     await tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction(
                                         operation.params.exitRequested,
                                         latestConversation,
@@ -122,7 +122,7 @@ export async function multiEditCoordinator(
                                 // Normal Path
                                 // ============================================================
                                 if (operation.name === "promptProcessorAppendNewAssistantMessageToEndOfConversationJson") {
-                                    console.log("=====promptProcessorAppendNewAssistantMessageToEndOfConversationJson=====");
+
                                     const pendingSaveMemoryState = getPendingSaveMemory();
                                     
                                     const previousTurnState =  getPreviousTurnSavingState();
@@ -143,7 +143,7 @@ export async function multiEditCoordinator(
                                 // Remove Memory Seeds Path
                                 // ============================================================
                                 if (operation.name === "tryRemoveMemorySeedsTimeoutFunction") {
-                                    console.log("=====tryRemoveMemorySeedsTimeoutFunction=====");
+
                                     await tryRemoveMemorySeedsTimeoutFunction(
                                         operation.params.cleanupAllSeeds,
                                         latestConversation,
