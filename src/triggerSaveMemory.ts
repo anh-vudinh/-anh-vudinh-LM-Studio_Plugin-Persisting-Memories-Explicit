@@ -504,7 +504,7 @@ export async function constructAssistantReplySaveMemoryExit(
 
     lines.push(
         `- Category: ${pendingSaveMemory.category === null
-            ? `[Not Provided]`
+            ? `[ Not Provided ]`
             : `[ ${pendingSaveMemory.category} ]`
         }`
     );
