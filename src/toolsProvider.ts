@@ -3,10 +3,6 @@ import { getMemorySeedsPool } from "./memorySession";
 import { deleteMemorySeedFile } from "./deleteMemorySeedFiles"
 import { configSchematics } from "./config";
 
-/**
-* ToolsProvider is serves only one purpose to listen for when user puts a memory to
-* delete into the control panel
-*/
 export async function toolsProvider(
   ctl: ToolsProviderController
 ): Promise<Tool[]> {

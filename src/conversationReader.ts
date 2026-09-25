@@ -337,15 +337,16 @@ export function cleanAssistantResponse(text: string): string {
 
         cleaned = text.slice(endIndex);
     }
-
+    // left for compatibility even though this plugin does not use the method where this would have cleaned it up.
     cleaned = cleaned.replace(
-        /\n+\*\*message \d+\*\*\s*$/,
+        /\n+\*\*\*message \d+\*\*\*\s*$/,
         "",
     );
 
     return cleaned.trim();
 }
 
+// Purposely left Formating Instruction clean up for compatibility even though this plugin does not use it anymore.
 export function cleanUserInput(text: string): string {
     return text
         .replace(
@@ -364,9 +365,9 @@ export function cleanUserInput(text: string): string {
             /Ignore this ICID tag\./,
             "",
         )
+        .replace(
+            /System: the user[\s\S]*?'pending save memory\.\.\.'/g,
+            "",
+        )
         .trim();
-        // .replace(
-        //     /\[ADD_MN_\d+\]/,
-        //     "",
-        // )  
 }

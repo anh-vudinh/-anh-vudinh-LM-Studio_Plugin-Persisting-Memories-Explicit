@@ -106,10 +106,6 @@ export function getController(): PromptPreprocessorController {
     return ctl;
 }
 
-// export function setCurrentConversationFileName(value: string): void {
-//     currentConversationFileName = value;
-// }
-
 export function getCurrentConversationFileName(): string {
     return currentConversationFileName;
 }

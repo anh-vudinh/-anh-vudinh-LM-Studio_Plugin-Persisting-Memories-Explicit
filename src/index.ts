@@ -12,7 +12,6 @@ import {
     configSchematics,
 } from "./config";
 
-
 /**
  * Populating the config starts here rather than
  * the default of starting in config.ts
@@ -79,9 +78,9 @@ export async function main(context: PluginContext) {
     // first population of the config values
     setConfigSchematics({memorySeedsPool: memorySeedsPool});
 
+    context.withConfigSchematics(configSchematics);
     context.withToolsProvider(toolsProvider);
     context.withPromptPreprocessor(promptPreprocessor);
-    context.withConfigSchematics(configSchematics);
 
     console.log("Memory Seed Plugin initialized");
 }

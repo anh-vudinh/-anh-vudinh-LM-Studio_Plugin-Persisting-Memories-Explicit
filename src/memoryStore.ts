@@ -1,12 +1,8 @@
 import { getMemorySeedsPool } from "./memorySession";
-import { unlink } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import {
-    setConfigSchematics,
-    setLockFileOriginatesFromThisPlugin
-} from "./config";
+import { setConfigSchematics } from "./config";
 
 export interface MemorySeed {
     date: string;
@@ -137,7 +133,6 @@ export class MemoryStore {
         category: string,
         name: string,
         seed: MemorySeed,
-        lockFile: string,
         saveMemoryNumber: number,
     ): Promise<void> {
         const directory = await this.initializeAndGetDirectory();
@@ -230,19 +225,6 @@ export class MemoryStore {
                     memorySeedName,
                 ],
             });
-        }
-
-        // resets the saveMemoryNumber to it's default
-        // setSaveMemoryNumber(null);
-
-        // remove lockfile
-        try {
-            await unlink(lockFile);
-            console.log("=====lock PM removed=====")
-        } catch {
-            // ignore
-        } finally {
-            setLockFileOriginatesFromThisPlugin(lockFile, null);
         }
     }
 

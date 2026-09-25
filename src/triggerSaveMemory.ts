@@ -1,23 +1,15 @@
 import { memoryStore } from "./memoryStore";
-import { join } from "node:path";
-import { normalizeJsonFileName, acquireLock } from "./promptPreprocessor";
 import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
-import { writeFile, readFile, unlink } from "node:fs/promises";
 import { isEligibleAssistantMessage } from "./conversationReader"
-import { multiEditCoordinator } from "./multiEditCoordinator";
 
 import {
-    getConversationOperations,
     addConversationOperation,
     setPreviousTurnSavingState,
     getController,
-    getCurrentConversationFileName,
     setPendingSaveMemory,
     getPendingSaveMemory,
     resetPendingSaveMemory,
-    getLockFileOriginatesFromThisPlugin,
-    setLockFileOriginatesFromThisPlugin,
     PendingSaveMemory,
 } from "./config"
 
@@ -215,12 +207,20 @@ export async function processMessage(
     };
 }
 
+/**
+ * Flow is prompt preprocessor → appendSaveMemoryTextAtEndOfConversationJson → multiEditCoordinator
+ * → tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction → string constructors → editAssistantResponse →
+ * (all fields given) → saveMemory → appendSaveMemoryTextAtEndOfConversationJson → tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction
+ * → multiEditCoordinator(conversation.json write)
+ */
 async function appendSaveMemoryTextAtEndOfConversationJson(
     exitRequested: boolean,
 ): Promise<void> {
 
     const pendingSaveMemory = getPendingSaveMemory();
 
+    // Queuing save memory logic to write conversation.json
+    // Passing params required by children functions over
     addConversationOperation(
         "tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction",
         {
@@ -228,160 +228,15 @@ async function appendSaveMemoryTextAtEndOfConversationJson(
             pendingSaveMemory,
         },
     );
-// if(getConversationOperations().length === 0){
-//     if (
-//         (pendingSaveMemory.active === true &&
-//         pendingSaveMemory.memoryNumber !== null) ||
-//         exitRequested === true
-//     ) {
 
-//         const rootDirectory = await memoryStore.getRootDirectory();
-//         const conversationFileName = getCurrentConversationFileName();
-
-//         try{
-//             // Construct the path to the conversation file
-//             const conversationDirectory = join(
-//                 rootDirectory,
-//                 "conversations"
-//             );
-
-//             const conversationFile = join(
-//                 conversationDirectory,
-//                 normalizeJsonFileName(conversationFileName),
-//             );
-            
-//             // Prepare json file to be readable and assign to variable
-//             const conversationJson = await readFile(
-//                 conversationFile,
-//                 "utf-8",
-//             );
-
-//             const conversation = JSON.parse(conversationJson);
-            
-//             // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
-//             const originalAssistantLastMessagedAt =
-//                 conversation.assistantLastMessagedAt;
-
-//             const lockFile = `${conversationFile}.lock`;
-
-//             await acquireLock(lockFile);
-
-//             const lockOriginatesFromThisPlugin =
-//                 getLockFileOriginatesFromThisPlugin(lockFile);
-
-//             const pollInterval = lockOriginatesFromThisPlugin === false
-//                     ? 100
-//                     : 500;
-
-//             // Initiated polling until assistantLastMessagedAt value changes
-//             // then initiate the conversation json overwrite
-//             const pollForAssistantUpdate = setInterval(async () => {
-//                 try {
-//                     const latestJson = await readFile(
-//                         conversationFile,
-//                         "utf-8",
-//                     );
-
-//                     const latestConversation = JSON.parse(latestJson);
-
-//                     if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
-
-//                         clearInterval(pollForAssistantUpdate);
-
-//                         // false = another plugin created the lock → 20ms
-//                         // true/null = this plugin created it or no lock was present → 2000ms
-//                         const delay =
-//                             getLockFileOriginatesFromThisPlugin(lockFile) === false
-//                                 ? 100
-//                                 : 2000;
-                    
-//                         // This timeout is to circumvent LM Studio's behavior
-//                         setTimeout(async () => {
-//                             try {
-//                                 const latestJson = await readFile(
-//                                     conversationFile,
-//                                     "utf-8",
-//                                 );
-
-//                                 const latestConversation = JSON.parse(latestJson);
-
-//                                 let lines: string[] = [];
-
-//                                 // // Exit Save Memory State
-//                                 // if(exitRequested === true) {
-//                                 //     lines = (await constructAssistantReplySaveMemoryExit(pendingSaveMemory));
-//                                 // } else {
-//                                 //     // Category or File Name fields missing
-//                                 //     if(
-//                                 //         pendingSaveMemory.category === null ||
-//                                 //         pendingSaveMemory.fileName === null
-//                                 //     ) {
-//                                 //         lines = (await constructAssistantReplyForMissingFields(pendingSaveMemory));
-//                                 //     }
-
-//                                 //     // Saved Memory
-//                                 //     if(pendingSaveMemory.category !== null &&
-//                                 //         pendingSaveMemory.fileName !== null){
-//                                 //         lines = (await constructAssistantReplySaveMemory(pendingSaveMemory));
-//                                 //     }
-//                                 // }
-//                                 lines = await tryRequestMissingFieldsAtEndOfConversationJsonTimeoutFunction(
-//                                     exitRequested,
-//                                     pendingSaveMemory,
-//                                 );
-
-//                                 // EDIT ASSISTANT'S LAST MESSAGE
-//                                 await editAssistantResponse(
-//                                     latestConversation,
-//                                     lines.join("\n\n"),
-//                                 );
-
-//                                 await writeFile(
-//                                     conversationFile,
-//                                     JSON.stringify(latestConversation, null, 2),
-//                                     "utf-8",
-//                                 );
-                                
-//                             } catch (error) {
-//                                 console.error(
-//                                     "Error during delayed memory seed cleanup:",
-//                                     error,
-//                                 );
-//                             } finally {
-//                                 try {
-//                                     await unlink(lockFile);
-//                                     console.log("=========lock removed by PM========")
-//                                     // Break the cycle, Exit memory save state by resetting to defaults
-//                                     if(exitRequested === true) {
-//                                         resetPendingSaveMemory();
-//                                     }
-//                                 } catch {
-//                                     // ignore
-//                                 } finally {
-//                                     setLockFileOriginatesFromThisPlugin(lockFile, null);
-//                                     setPreviousTurnSavingState(true);
-//                                 }
-//                             }
-//                         }, delay);
-//                     }
-//                 } catch (error) {
-//                     clearInterval(pollForAssistantUpdate);
-
-//                     console.error(
-//                         "Error polling for assistant update:",
-//                         error,
-//                     );
-//                 }
-//             }, pollInterval);
-
-//         } catch (error) {
-            
-//             throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
-//         }
-//     }
-// }
+    //=================================================
+    // CODE NOW RUNS FROM multiEditCoordinator.ts
+    //=================================================
 }
 
+/**
+ * multiEditCoordinator calls this function
+ */
 export async function tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction(
     exitRequested: boolean,
     latestConversation: any,
@@ -390,12 +245,12 @@ export async function tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunct
 
     let lines: string[] = [];
 
-    console.log("exitRequested",exitRequested)
     // Exit Save Memory State
     if(exitRequested === true) {
         lines = (await constructAssistantReplySaveMemoryExit(pendingSaveMemory));
     } else {
-        // Category or File Name fields missing
+
+        // Category or File Name fields missing path
         if(
             pendingSaveMemory.category === null ||
             pendingSaveMemory.fileName === null
@@ -403,7 +258,7 @@ export async function tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunct
             lines = (await constructAssistantReplyForMissingFields(pendingSaveMemory));
         }
 
-        // Saved Memory
+        // Saved Memory path
         if(pendingSaveMemory.category !== null &&
             pendingSaveMemory.fileName !== null){
             lines = (await constructAssistantReplySaveMemory(pendingSaveMemory));
@@ -420,6 +275,7 @@ export async function editAssistantResponse(
     conversation: any,
     replacementText: string,
 ): Promise<void> {
+
     // Find the last assistant message
     const assistantMessage = [...conversation.messages]
         .reverse()
@@ -535,19 +391,6 @@ async function saveMemory({
     fileName: string,
 }): Promise<void> {
 
-    // Create lockfile so current history isn't overwritten while saving
-    const conversationDirectory = join(
-        await memoryStore.getRootDirectory(),
-        "conversations"
-    );
-
-    const conversationFile = join(
-        conversationDirectory,
-        normalizeJsonFileName(getCurrentConversationFileName()),
-    );
-
-    const lockFile = `${conversationFile}.lock`;
-
     const ctl = getController();
 
     try {
@@ -569,7 +412,6 @@ async function saveMemory({
                 direct_input: association.directInput,
                 output: association.assistantResponse,
             },
-            lockFile,
             memoryNumber,
         );
 
@@ -584,11 +426,18 @@ async function saveMemory({
 
     } finally {
         // Reset state for new tool calls
+        // previousTurnSavingState is to prevent the normal path from
+        // trying to append when save handles the appending of message #.
+        // Possible reduction here because writes are handled by the coordinator now.
         setPreviousTurnSavingState(true);
         resetPendingSaveMemory();
     }
 }
 
+/**
+ * Constructors for the Save Memory Message strings
+ * For Missing Fields - Successful memory save - Save memory early abort
+ */
 export async function constructAssistantReplySaveMemory(
     pendingSaveMemory: PendingSaveMemory,
 ): Promise<string[]>{
@@ -656,14 +505,14 @@ export async function constructAssistantReplySaveMemoryExit(
     lines.push(
         `- Category: ${pendingSaveMemory.category === null
             ? `[Not Provided]`
-            : pendingSaveMemory.category
+            : `[ ${pendingSaveMemory.category} ]`
         }`
     );
 
     lines.push(
         `- Memory Name: ${pendingSaveMemory.fileName === null
-            ? `[Not Provided]`
-            : pendingSaveMemory.fileName
+            ? `[ Not Provided ]`
+            : `[ ${pendingSaveMemory.fileName} ]`
         }`
     );
 

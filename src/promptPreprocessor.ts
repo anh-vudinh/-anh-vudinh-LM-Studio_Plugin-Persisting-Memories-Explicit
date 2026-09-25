@@ -10,9 +10,7 @@ import path from "node:path";
 
 import {
     addConversationOperation,
-    getConversationOperations,
     getPreviousTurnSavingState,
-    getLockFileOriginatesFromThisPlugin,
     getPendingSaveMemory,
     setController,
     configSchematics,
@@ -113,7 +111,7 @@ export async function promptPreprocessor(
 
         conversationFileName = normalizeJsonFileName(conversationFileName);
     }
-
+    
     // testing userText if it's a memory command and extracting key variables,
     // taking the power away from unreliable tools from determining this.
     await processMessage(userText);
@@ -130,19 +128,8 @@ export async function promptPreprocessor(
         previousTurnState === false) ||
         previousTurnState === null
     ) {
-        // if(getConversationFunctionsToExecute().length === 0){
-        //     await promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
-        //         conversationFileName,
-        //         assistantIndex,
-        //     );
-        // }else{
-        //     addConversationFunctionToExecute("promptProcessorAppendNewAssistantMessageToEndOfConversationJson");
-        // }
+        await promptProcessorAppendNewAssistantMessageToEndOfConversationJson(assistantIndex);
 
-        await promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
-            conversationFileName,
-            assistantIndex,
-        );
         setPreviousTurnSavingState(null);
     }
 
@@ -213,7 +200,6 @@ export async function promptPreprocessor(
         cleanupAllSeeds = true;
 
         await promptProcessorRemoveSeeds(
-            conversationFileName, 
             injectedMemorySeeds, 
             validMemorySeedsSelected, 
             cleanupAllSeeds
@@ -221,7 +207,6 @@ export async function promptPreprocessor(
 
         injectedMemorySeeds = [];
 
-        // addConversationFunctionToExecute("promptProcessorRemoveSeeds");
     }
 
     // Remove specific memory seeds the user no longer wants
@@ -231,47 +216,47 @@ export async function promptPreprocessor(
         cleanupAllSeeds = false;
 
         injectedMemorySeeds = await promptProcessorRemoveSeeds(
-            conversationFileName, 
             injectedMemorySeeds, 
             validMemorySeedsSelected, 
             cleanupAllSeeds
         );
-
-        // addConversationFunctionToExecute("promptProcessorRemoveSeeds");
     }
 
-    // if(getConversationOperations().length >= 1) {
-    //     await multiEditCoordinator(false);
-    // }
     await multiEditCoordinator(false);
+
     // MESSAGE WITH MEMORIES
     if (injectedContext) {
+        // Sending prompt to model during saving memory active phase. This way it does not waste tokens and time
+        // pretending to play along and fake a save.
         if(pendingSaveMemoryState.active === true) {
             return (
-                `${userText}.            ` +
-                "System: the user is trying to save a memory, give a short reply 'pending save memory...'." +
+                `${userText}.                          ` +
+                `${injectedContext}[END OF MEMORIES] ` +
+                "System: the user is trying to save a memory, ignore what is between the [BEGINNING OF MEMORIES] and [END OF MEMORIES TAG], give a short reply 'pending save memory...'." +
                 `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
             )
         };
 
         return (
-            `${userText}.            ` +
+            `${userText}.` +
             `${injectedContext}[END OF MEMORIES] ` +
             `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
         );
     }
 
     // NORMAL MESSAGE
+    // Sending prompt to model during saving memory active phase. This way it does not waste tokens and time
+    // pretending to play along and fake a save.
     if(pendingSaveMemoryState.active === true) {
         return (
-            `${userText}.            ` +
+            `${userText}.                          ` +
             "System: the user is trying to save a memory, give a short reply 'pending save memory...'." +
             `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
         );
     }
 
     return (
-        `${userText}.            ` +
+        `${userText}.` +
         `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
     );
 }
@@ -287,6 +272,7 @@ interface ChatSessionConversationRelationship {
 /**
 * Try and recover InternalChatID from in memory InternalChatID
 * or using the fallback of the scanForConversationFileThruBaseNameOfWorkingDirectory() scan
+* WD is not a guarantee, I've seen an empty.conversation file name with an empty-a611d49f33fc Working directory basename
 * If either is impossible than there's no choice but to assign a new ICID
 */
 async function promptProcessorRecoverChatID(
@@ -295,6 +281,11 @@ async function promptProcessorRecoverChatID(
     workingDirectory: string,
     userText: string,
 ): Promise<string> {
+
+    // If already available in memory, use it.
+    if (internalChatID !== "") {
+        return internalChatID;
+    }
 
     const rootDirectory = await memoryStore.getRootDirectory();
 
@@ -309,14 +300,8 @@ async function promptProcessorRecoverChatID(
         "ChatSessionConversationRelationship.json",
     );
 
-    // If already available in memory, use it.
-    if (internalChatID !== "") {
-        return internalChatID;
-    }
-
     // Cannot perform relationship lookup without a filename.
     if (conversationFileName === "") {
-        
         // Attempt a reverse lookup first using the basename of working directory
         conversationFileName = await scanForConversationFileThruBaseNameOfWorkingDirectory(
             workingDirectory,
@@ -324,7 +309,7 @@ async function promptProcessorRecoverChatID(
             conversationFileName,
             userText,
         );
-        
+
         // Conversation File Name still unknown, cannot resume with recovery
         if(conversationFileName === "") {
             return "";
@@ -352,8 +337,9 @@ async function promptProcessorRecoverChatID(
         ) {
 
             const relationship = relationships[i];
-
+            
             if (relationship.conversationFile === conversationFileName) {
+
                 return relationship.internalChatID;
             }
         }
@@ -423,35 +409,6 @@ async function promptProcessorScanHistoryForID(
     }
 
     return searchedInternalChatID;
-}
-
-/*
-* Note: history will always be missing the newest user+assistant message,
-* so it's useless during the very first user message in chat.
-*/
-async function promptProcessorScanHistoryForNumberingInstruction(
-    messages: ChatMessage[],
-): Promise<boolean> {
-
-    for (const message of messages) {
-
-        if ((message as any).data.role !== "user") {
-            continue;
-        }
-
-        for (const content of (message as any).data.content ?? []) {
-
-            if (content.type !== "text" || !content.text) {
-                continue;
-            }
-
-            if (/\[ADD_MN_<##>\]/.test(content.text)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
 }
 
 /**
@@ -577,12 +534,11 @@ async function promptProcessorScanForConversationFile(
 
                 // Update InternalChatID outer scope variable with what we just wrote in
                 internalChatID = relationshipData.internalChatID;
-                setConfigSchematics({conversationFileName: conversationFileName});
+                setConfigSchematics({conversationFileName: normalizeJsonFileName(conversationFileName)});
                 return conversationFileName;
             } finally {
                 try {
                     await unlink(lockFile);
-                    console.log("========remove lock relationship PM SCAN1");
                 } catch {
                     // ignore
                 } finally {
@@ -619,67 +575,16 @@ async function promptProcessorScanForConversationFile(
     // FINAL STEP:
     // If we found a conversation file through STEP 3 or STEP 4,
     // create/update the relationship in ChatSessionConversationRelationship.json.
-    const lockFile = `${relationshipFile}.lock`;
-
     if (foundConversationFileName !== "") {
-        await acquireLock(lockFile);
-
-        try {
-            // If this conversation file already has a relationship,
-            // reuse its existing InternalChatID.
-            const existingRelationship = relationships.find(
-                (relationship) =>
-                    relationship.conversationFile === foundConversationFileName,
-            );
-
-            if (existingRelationship) {
-                internalChatID = existingRelationship.internalChatID;
-            }
-
-            const relationshipData = {
-                internalChatID,
-                conversationFile: foundConversationFileName,
-            };
-
-            // Remove the old copy of this relationship.
-            relationships = relationships.filter(
-                (relationship) =>
-                    relationship.internalChatID !== internalChatID &&
-                    relationship.conversationFile !== foundConversationFileName,
-            );
-
-            // Reinsert it at the bottom so the newest relationship
-            // is always the last entry.
-            relationships.push(relationshipData);
-
-            // Keep only the newest relationships.
-            if (relationships.length > relationshipsLimit) {
-                relationships = relationships.slice(-relationshipsLimit);
-            }
-
-            await writeFile(
-                relationshipFile,
-                JSON.stringify(relationships, null, 2),
-                "utf-8",
-            );
-
-            // Update InternalChatID outer scope variable with what we just wrote in
-            internalChatID = relationshipData.internalChatID;
-
-        } finally {
-            try {
-                await unlink(lockFile);
-                console.log("========remove lock relationship PM FINAL STEP");
-            } catch {
-                // ignore
-            } finally {
-                setLockFileOriginatesFromThisPlugin(lockFile, null);
-            }
-        }
+        updateRelationshipFile(
+            relationships,
+            rootDirectory,
+            foundConversationFileName,
+        );
     }
 
     // Set config state after scanning and relationship persistence.
-    setConfigSchematics({conversationFileName: foundConversationFileName});
+    setConfigSchematics({conversationFileName: normalizeJsonFileName(foundConversationFileName)});
 
     return foundConversationFileName;
 }
@@ -765,7 +670,96 @@ async function promptProcessorHistorySimpleScanForSeeds(
     return false;
 }
 
+async function updateRelationshipFile(
+    relationships: any[],
+    rootDirectory: string,
+    conversationFileName: string,
+): Promise<void> {
+    
+    // Construct the path to the conversation file
+    const conversationDirectory = join(
+        rootDirectory,
+        "conversations"
+    );
+
+    const relationshipFile = join(
+        conversationDirectory,
+        "ChatSessionConversationRelationship.json",
+    );
+
+    // Read the relationship file
+    try {
+        const relationshipJson = await readFile(
+            relationshipFile,
+            "utf-8",
+        );
+
+        relationships = JSON.parse(relationshipJson);
+
+    } catch {
+        // File doesn't exist yet, so we'll create it in a later step.
+    }
+
+    const lockFile = `${relationshipFile}.lock`;
+
+    await acquireLock(lockFile);
+
+    try {
+        // If this conversation file already has a relationship,
+        // reuse its existing InternalChatID.
+        const existingRelationship = relationships.find(
+            (relationship) =>
+                relationship.conversationFile === conversationFileName,
+        );
+
+        if (existingRelationship) {
+            internalChatID = existingRelationship.internalChatID;
+        }
+
+        const relationshipData = {
+            internalChatID,
+            conversationFile: conversationFileName,
+        };
+
+        // Remove the old copy of this relationship.
+        relationships = relationships.filter(
+            (relationship) =>
+                relationship.internalChatID !== internalChatID &&
+                relationship.conversationFile !== conversationFileName,
+        );
+
+        // Reinsert it at the bottom so the newest relationship
+        // is always the last entry.
+        relationships.push(relationshipData);
+
+        // Keep only the newest relationships.
+        if (relationships.length > relationshipsLimit) {
+            relationships = relationships.slice(-relationshipsLimit);
+        }
+
+        await writeFile(
+            relationshipFile,
+            JSON.stringify(relationships, null, 2),
+            "utf-8",
+        );
+
+        // Update InternalChatID outer scope variable with what we just wrote in
+        internalChatID = relationshipData.internalChatID;
+
+    } finally {
+        try {
+            await unlink(lockFile);
+            
+        } catch {
+            // ignore
+        } finally {
+            setLockFileOriginatesFromThisPlugin(lockFile, null);
+        }
+    }
+}
+
 /**
+* MEMORIES SEED SECTION
 * Constructor for the final memories text to feed into the prompt preprocessor
 */
 async function promptProcessorConstructMemoriesToInject(
@@ -916,7 +910,6 @@ async function promptProcessorConstructMemoriesToInject(
 * Simple middleman to figure out which valid memories the user chose to remove
 */
 async function promptProcessorRemoveSeeds(
-    conversationFileName: string,
     injectedMemorySeeds: string[],
     validMemorySeedsSelected: string[],
     cleanupAllSeeds: boolean,
@@ -934,7 +927,7 @@ async function promptProcessorRemoveSeeds(
     // Second check to make sure there's actually something to remove
     if(memorySeedsToRemove.length > 0) {
 
-        await removeMemorySeeds(conversationFileName, validMemorySeedsSelected, memorySeedsToRemove, cleanupAllSeeds);
+        await removeMemorySeeds(validMemorySeedsSelected, memorySeedsToRemove, cleanupAllSeeds);
     }
 
     return validMemorySeedsSelected;
@@ -960,6 +953,171 @@ function areStringArraysEqualAsSets(
 export function normalizeJsonFileName(jsonFileName: string){
 
     return jsonFileName.replace(/(\.json).*$/, "$1");
+}
+
+/**
+ * Three States for lock
+ * Null = no one claims ownership, abandoned file
+ * True = lock was successfully acquired by this plugin
+ * False = there was another lock exisiting before this plugin could acquire it
+ * This will help regulate the timings of multiple polling plugins.
+ * Needed to play with my context cleanup plugin.
+ * https://github.com/anh-vudinh/LM-Studio_Context-Cleanup
+ * 
+ * MAKE SURE WHERE EVER YOU USE THIS ACQUIRELOCK FUNCTION YOU TRY CATCH FINALLY AND IN FINALLY ALWAYS UNLINK THE CORRESPONDING LOCKFILE CREATED
+ * This acquirelock getter and checker cannot tolerate duplicate lockfiles originating from itself. It will error out to the saftey terminate timeout
+ * There is tolerance for lock files with dupe names originating from other plugins and unique lockfile names.
+ */
+export async function acquireLock(
+    lockFile: string,
+): Promise<void> {
+
+    const startedAt = Date.now();
+
+    while (true) {
+
+        if (Date.now() - startedAt >= 20_000) {
+            throw new Error(
+                `Timed out waiting for lock: ${lockFile}`,
+            );
+        }
+
+        try {
+            const handle = await open(lockFile, "wx");
+
+            setLockFileOriginatesFromThisPlugin(lockFile, true);
+
+            await handle.close();
+
+            return;
+        } catch (error) {
+            const fsError = error as NodeJS.ErrnoException;
+
+            if (fsError.code !== "EEXIST") {
+                throw error;
+            }
+
+            setLockFileOriginatesFromThisPlugin(lockFile, false);
+
+            try {
+                const stats = await stat(lockFile);
+                const lockAge = Date.now() - stats.mtimeMs;
+
+                if (lockAge >= LOCK_TIMEOUT_MS) {
+                    await unlink(lockFile);
+                    continue;
+                }
+            } catch (error) {
+                const fsError = error as NodeJS.ErrnoException;
+
+                if (fsError.code !== "ENOENT") {
+                    throw error;
+                }
+
+                continue;
+            }
+
+            await new Promise<void>((resolve) =>
+                setTimeout(resolve, POLL_INTERVAL_MS),
+            );
+        }
+    }
+}
+
+/**
+ * Flow is prompt preprocessor → promptProcessorAppendNewAssistantMessageToEndOfConversationJson → multiEditCoordinator
+ * → promptProcessorConstructMessageNumberTag → multiEditCoordinator(conversation.json write)
+ */
+async function promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
+    assistantIndex: number,
+): Promise<void> {
+
+    addConversationOperation(
+        "promptProcessorAppendNewAssistantMessageToEndOfConversationJson",
+        {
+            assistantIndex,
+        },
+    );
+}
+
+/**
+ * Constructs the Message Number Tag
+ * Appends the content block after the assistant response
+ */
+export function promptProcessorConstructMessageNumberTag(
+    conversation: any,
+    assistantIndex: number,
+): void {
+
+    // Find the last assistant message
+    const assistantMessage = [...conversation.messages]
+        .reverse()
+        .find((message: any) =>
+            message.versions?.[
+                message.currentlySelected ?? 0
+            ]?.role === "assistant",
+        );
+
+    if (!assistantMessage) {
+        throw new Error("No assistant message found.");
+    }
+
+    // Get the last version
+    const assistantVersion =
+        assistantMessage?.versions?.[
+            assistantMessage.currentlySelected ?? 0
+        ];
+     
+    if (!assistantVersion) {
+        throw new Error("Assistant message has no versions.");
+    }
+
+    // Find debugInfoBlock
+    const debugInfoIndex = assistantVersion.steps.findIndex(
+        (step: any) => step.type === "debugInfoBlock",
+    );
+
+    // Create the new content block
+    const markerBlock = {
+        type: "contentBlock",
+        stepIdentifier: String(Date.now()),
+        content: [
+            {
+            type: "text",
+            text: `\n\n***message ${assistantIndex}***`,
+            fromDraftModel: false,
+            tokensCount: 1,
+            isStructural: false,
+            },
+        ],
+        defaultShouldIncludeInContext: false,
+        shouldIncludeInContext: false,
+        };
+
+        const markerExists = assistantVersion.steps.some(
+        (step: any) =>
+            step.type === "contentBlock" &&
+            step.content?.some(
+                (contentBlock: any) =>
+                    contentBlock.type === "text" &&
+                    contentBlock.text === `\n\n***message ${assistantIndex}***`,
+            ),
+    );
+
+    // Try to add marker block object before debug.
+    // If that doesn't exist just add after the last role: assistant content block.
+    const insertIndex =
+        debugInfoIndex !== -1
+            ? debugInfoIndex
+            : assistantVersion.steps.length;
+
+    if (!markerExists) {
+        assistantVersion.steps.splice(
+            insertIndex,
+            0,
+            markerBlock,
+        );
+    }
 }
 
 /**
@@ -1271,276 +1429,4 @@ async function findAllConversationFiles(
     return filesWithModifiedTime.map(
         (file) => file.filePath,
     );
-}
-
-
-/**
- * Three States for lock
- * Null = no one claims ownership, abandoned file
- * True = lock was successfully acquired by this plugin
- * False = there was another lock exisiting before this plugin could acquire it
- */
-export async function acquireLock(
-    lockFile: string,
-): Promise<void> {
-
-    const startedAt = Date.now();
-
-    while (true) {
-
-        if (Date.now() - startedAt >= 20_000) {
-            throw new Error(
-                `Timed out waiting for lock: ${lockFile}`,
-            );
-        }
-
-        try {
-            const handle = await open(lockFile, "wx");
-
-            setLockFileOriginatesFromThisPlugin(lockFile, true);
-            console.log("=====lock created by PM=====");
-
-            await handle.close();
-
-            return;
-        } catch (error) {
-            const fsError = error as NodeJS.ErrnoException;
-
-            if (fsError.code !== "EEXIST") {
-                throw error;
-            }
-
-            setLockFileOriginatesFromThisPlugin(lockFile, false);
-            console.log("=====lock not FROM PM=====");
-
-            try {
-                const stats = await stat(lockFile);
-                const lockAge = Date.now() - stats.mtimeMs;
-
-                if (lockAge >= LOCK_TIMEOUT_MS) {
-                    await unlink(lockFile);
-                    continue;
-                }
-            } catch (error) {
-                const fsError = error as NodeJS.ErrnoException;
-
-                if (fsError.code !== "ENOENT") {
-                    throw error;
-                }
-
-                continue;
-            }
-
-            await new Promise<void>((resolve) =>
-                setTimeout(resolve, POLL_INTERVAL_MS),
-            );
-        }
-    }
-}
-
-/**
- * 
- */
-async function promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
-    conversationFileName: string,
-    assistantIndex: number,
-): Promise<void> {
-
-    addConversationOperation(
-        "promptProcessorConstructMessageNumberTag",
-        {
-            assistantIndex,
-        },
-    );
-//     console.log("=================getconvoop", getConversationOperations().length);
-//     const rootDirectory = await memoryStore.getRootDirectory();
-// if(getConversationOperations().length === 1){
-//     try{
-//         // Construct the path to the conversation file
-//         const conversationDirectory = join(
-//             rootDirectory,
-//             "conversations"
-//         );
-
-//         const conversationFile = join(
-//             conversationDirectory,
-//             normalizeJsonFileName(conversationFileName),
-//         );
-        
-//         // Prepare json file to be readable and assign to variable
-//         const conversationJson = await readFile(
-//             conversationFile,
-//             "utf-8",
-//         );
-
-//         const conversation = JSON.parse(conversationJson);
-        
-//         // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
-//         const originalAssistantLastMessagedAt =
-//             conversation.assistantLastMessagedAt;
-
-//         const lockFile = `${conversationFile}.lock`;
-
-//         await acquireLock(lockFile);
-
-//         const lockOriginatesFromThisPlugin =
-//             getLockFileOriginatesFromThisPlugin(lockFile);
-
-//         const pollInterval = lockOriginatesFromThisPlugin === false
-//                 ? 100
-//                 : 500;
-
-//         // Initiated polling until assistantLastMessagedAt value changes
-//         // then initiate the conversation json overwrite
-//         const pollForAssistantUpdate = setInterval(async () => {
-//             try {
-//                 const latestJson = await readFile(
-//                     conversationFile,
-//                     "utf-8",
-//                 );
-
-//                 const latestConversation = JSON.parse(latestJson);
-
-//                 if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
-
-//                     clearInterval(pollForAssistantUpdate);
-
-//                     // false = another plugin created the lock → 20ms
-//                     // true/null = this plugin created it or no lock was present → 2000ms
-//                     const delay =
-//                         getLockFileOriginatesFromThisPlugin(lockFile) === false
-//                             ? 100
-//                             : 2000;
-                
-//                     // This timeout is to circumvent LM Studio's behavior
-//                     setTimeout(async () => {
-//                         try {
-//                             const latestJson = await readFile(
-//                                 conversationFile,
-//                                 "utf-8",
-//                             );
-
-//                             const latestConversation = JSON.parse(latestJson);
-
-//                             // INSERT MESSAGE # OBJECT
-//                             promptProcessorConstructMessageNumberTag(
-//                                 latestConversation,
-//                                 assistantIndex,
-//                             );
-
-//                             await writeFile(
-//                                 conversationFile,
-//                                 JSON.stringify(latestConversation, null, 2),
-//                                 "utf-8",
-//                             );
-                            
-//                         } catch (error) {
-//                             console.error(
-//                                 "Error during delayed memory seed cleanup:",
-//                                 error,
-//                             );
-//                         } finally {
-//                             try {
-//                                 await unlink(lockFile);
-//                             } catch {
-//                                 // ignore
-//                             } finally {
-//                                 setLockFileOriginatesFromThisPlugin(lockFile, null);
-//                             }
-//                         }
-//                     }, delay);
-//                 }
-//             } catch (error) {
-//                 clearInterval(pollForAssistantUpdate);
-
-//                 console.error(
-//                     "Error polling for assistant update:",
-//                     error,
-//                 );
-//             }
-//         }, pollInterval);
-
-//     } catch (error) {
-        
-//         throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
-//     }
-// }
-}
-
-export function promptProcessorConstructMessageNumberTag(
-    conversation: any,
-    assistantIndex: number,
-): void {
-
-    // Find the last assistant message
-    const assistantMessage = [...conversation.messages]
-        .reverse()
-        .find((message: any) =>
-            message.versions?.[
-                message.currentlySelected ?? 0
-            ]?.role === "assistant",
-        );
-
-    if (!assistantMessage) {
-        throw new Error("No assistant message found.");
-    }
-
-    // Get the last version
-    const assistantVersion =
-        assistantMessage?.versions?.[
-            assistantMessage.currentlySelected ?? 0
-        ];
-     
-    if (!assistantVersion) {
-        throw new Error("Assistant message has no versions.");
-    }
-
-    // Find debugInfoBlock
-    const debugInfoIndex = assistantVersion.steps.findIndex(
-        (step: any) => step.type === "debugInfoBlock",
-    );
-
-    //const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
-
-    // Create the new content block
-    const markerBlock = {
-        type: "contentBlock",
-        stepIdentifier: String(Date.now()),
-        content: [
-            {
-            type: "text",
-            text: `\n\n***message ${assistantIndex}***`,
-            fromDraftModel: false,
-            tokensCount: 1,
-            isStructural: false,
-            },
-        ],
-        defaultShouldIncludeInContext: false,
-        shouldIncludeInContext: false,
-        };
-
-        const markerExists = assistantVersion.steps.some(
-        (step: any) =>
-            step.type === "contentBlock" &&
-            step.content?.some(
-                (contentBlock: any) =>
-                    contentBlock.type === "text" &&
-                    contentBlock.text === `\n\n***message ${assistantIndex}***`,
-            ),
-    );
-
-    // Try to add marker block object before debug.
-    // If that doesn't exist just add after the last role: assistant content block.
-    const insertIndex =
-        debugInfoIndex !== -1
-            ? debugInfoIndex
-            : assistantVersion.steps.length;
-
-    if (!markerExists) {
-        assistantVersion.steps.splice(
-            insertIndex,
-            0,
-            markerBlock,
-        );
-    }
 }
