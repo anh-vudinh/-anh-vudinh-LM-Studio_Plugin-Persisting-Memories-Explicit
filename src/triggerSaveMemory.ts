@@ -403,13 +403,24 @@ async function saveMemory({
             memoryNumber,
         );
 
+        // Added some tolerance because users technically could delete all
+        // their user messages before asking the model to save a memory
+        const rootInput =
+            association.rootInput?.trim() ||
+            "original user intention/topic could not be found";
+
+        const directInput =
+            association.directInput?.trim() ||
+            association.rootInput?.trim() ||
+            "original user message could not be found";
+
         await memoryStore.saveSeed(
             category,
             fileName,
             {
                 date: new Date().toISOString(),
-                root_input: association.rootInput,
-                direct_input: association.directInput,
+                root_input: rootInput,
+                direct_input: directInput,
                 output: association.assistantResponse,
             },
             memoryNumber,

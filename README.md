@@ -4,8 +4,7 @@
     - [GithHub - Explicit](https://github.com/anh-vudinh/-anh-vudinh-LM-Studio_Plugin-Persisting-Memories-Explicit)
 
 - **Original Plugin (model behavior dependent)**
-    - [GithHub - Original](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories)
-    - [LMStudio](https://lmstudio.ai/anhuvdinh/persisting-memories)
+    - [GithHub - Original](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories) | [LMStudio](https://lmstudio.ai/anhuvdinh/persisting-memories)
 
 - **Optional Companion Plugin**
     - [GithHub - Context Cleanup](https://github.com/anh-vudinh/LM-Studio_Context-Cleanup)
@@ -35,7 +34,7 @@ In my opinion though this explicit version is far better. Even if you conflict w
 - [Technical Details](#technical-details)
 - [Limitations or Notes](#limitations-or-notes)
 
-> If you've already read my [Original Plugin's](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories) Readme, this will be the exact same functionality, just some pictures were updated/added and wording corrections fixed. Below is a picture of the new save memory mode. My notes section will elaborate on anything else.
+> If you've already read my [Original Plugin's](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories) Readme, this will be the exact same functionality, just some pictures were updated/added and wording corrections fixed. Below is a picture of the new save memory mode. My notes section will elaborate on anything else. Updated/New sections are marked in their sections.
 
 <details>
 <summary>Click to expand image of how the new Save Memory Requested Chat looks</summary>
