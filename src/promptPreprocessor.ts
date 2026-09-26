@@ -997,6 +997,10 @@ async function findAllConversationFiles(
             );
 
             if (entry.isFile()) {
+                if ( entry.name === "ChatSessionConversationRelationship.json") {
+                    continue;
+                }
+
                 if (
                     entry.name.endsWith(".lock") ||
                     entry.name.endsWith(".ready")
