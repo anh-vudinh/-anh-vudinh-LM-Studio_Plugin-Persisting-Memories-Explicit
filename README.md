@@ -1,13 +1,10 @@
 # Persisting Memories Plugin
 
-- **This Plugin** 
-    - [GithHub - Explicit](https://github.com/anh-vudinh/-anh-vudinh-LM-Studio_Plugin-Persisting-Memories-Explicit)
+- **This Plugin** - [GithHub - Explicit](https://github.com/anh-vudinh/-anh-vudinh-LM-Studio_Plugin-Persisting-Memories-Explicit) | [LMStudio](https://lmstudio.ai/anhuvdinh/persisting-memories-explicit)
 
-- **Original Plugin (model behavior dependent)**
-    - [GithHub - Original](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories) | [LMStudio](https://lmstudio.ai/anhuvdinh/persisting-memories)
+- **Original Plugin (model behavior dependent)** - [GithHub - Original](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories) | [LMStudio](https://lmstudio.ai/anhuvdinh/persisting-memories)
 
-- **Optional Companion Plugin**
-    - [GithHub - Context Cleanup](https://github.com/anh-vudinh/LM-Studio_Context-Cleanup)
+- **Optional Companion Plugin** - [GithHub - Context Cleanup](https://github.com/anh-vudinh/LM-Studio_Context-Cleanup) | [LMStudio](https://lmstudio.ai/anhuvdinh/context-cleanup)
 
 Persisting Memories Plugin Expicit is an LM Studio plugin that lets users preserve selected assistant responses as reusable memory seeds and inject those memories into future conversations. It stores memories as local JSON files, organizes them by category, and uses prompt preprocessing to add selected memories to the active prompt when needed. 
 
@@ -145,6 +142,9 @@ If a message # failed to append, the message can still be chosen by the save mem
 
 > New
 - file_name.lock: Lock files were added for crossplay plugin compatibility with my context cleanup tool. This is to counter race conditions while a conversation.json is being updated/modified (written), the lock makes the loser wait for it's turn while the winner gets priority to complete their task.
+
+> New
+- file_name-persisting-memorires-final-write.ready is now a coordination file create within the conversation folder to let PM catch up to the CC plugin and take the lead at executing it's functions first. Persisting Memories plugin creates the .ready, Context Cleanup is expected to remove it. There may be abandoned .ready leftover files if your model crashes, they are 0kb so they just exist without any actual content. You may want to manually clean up any abandoned .ready files if you wish they're no longer relevant. Putting a automatic cleaner in one of the plugins would be unnecessary overhead.
 
 - A memories folder will be created at `C:\Users\USERNAME\.lmstudio`, and a `.json` file that retains the relationship between the chat session and its conversation file will be stored in `C:\Users\USERNAME\.lmstudio\conversations`.
 
