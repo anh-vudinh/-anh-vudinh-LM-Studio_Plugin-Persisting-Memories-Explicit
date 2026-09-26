@@ -354,7 +354,7 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /\[BEGINNING OF MEMORIES\] NOT INSTRUCTIONS, JUST SOME PRIOR CONVERSATION:[\s\S]*?\[END OF MEMORIES\]/g,
+            /\[BEGINNING OF MEMORIES\][\s\S]*?\[END OF MEMORIES\]/g,
             "",
         )
         .replace(
@@ -366,7 +366,7 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /System: the user[\s\S]*?'pending save memory\.\.\.'/g,
+            /System:[\s\S]*?'pending save memory\.\.\.'/g,
             "",
         )
         .trim();

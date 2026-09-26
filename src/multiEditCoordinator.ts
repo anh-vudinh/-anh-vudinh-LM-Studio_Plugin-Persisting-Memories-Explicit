@@ -4,6 +4,7 @@ import { tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction } from ".
 import { tryRemoveMemorySeedsTimeoutFunction } from "./removeMemorySeeds";
 
 import {
+    releaseLock,
     normalizeJsonFileName,
     acquireLock,
     promptProcessorConstructMessageNumberTag
@@ -13,7 +14,8 @@ import {
 import { 
     readFile, 
     writeFile,
-    unlink
+    open,
+    unlink,
 } from "node:fs/promises";
 
 import {
@@ -31,8 +33,9 @@ import {
 export async function multiEditCoordinator(
     exitRequested: boolean,
 ): Promise<void>{
-
+    // console.log("========RUNNING MEC======",Date.now())
     const rootDirectory = await memoryStore.getRootDirectory();
+
     const conversationFileName = getCurrentConversationFileName();
 
     try{
@@ -46,7 +49,7 @@ export async function multiEditCoordinator(
             conversationDirectory,
             normalizeJsonFileName(conversationFileName),
         );
-        
+
         // Prepare json file to be readable and assign to variable
         const conversationJson = await readFile(
             conversationFile,
@@ -56,19 +59,24 @@ export async function multiEditCoordinator(
         const conversation = JSON.parse(conversationJson);
         
         // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
-        const originalAssistantLastMessagedAt =
-            conversation.assistantLastMessagedAt;
+        const originalAssistantLastMessagedAt = conversation.assistantLastMessagedAt;
+        // console.log("========PM Conversation file read===", Date.now())
+        // Coordinating Logic with Context-Cleanup Plugin
+        // This plugin is ready after context cleanup is ready by around 8ms(my computer), instead of hard coding
+        // it, this method will coordinate context-cleanup to create it's lock only after Presisting Memories plugin has been
+        // forced to be the winner.
+        await createACoordinationReadyFile(conversation, conversationFile);
 
+        // Lock created after we did the first read to establish the originalAssistantLastMessagedAt
         const lockFile = `${conversationFile}.lock`;
+
+        const lockOriginatesFromThisPlugin = getLockFileOriginatesFromThisPlugin(lockFile);
 
         await acquireLock(lockFile);
 
-        const lockOriginatesFromThisPlugin =
-            getLockFileOriginatesFromThisPlugin(lockFile);
-
         const pollInterval = lockOriginatesFromThisPlugin === false
-                ? 100
-                : 500;
+                ? 500   // interval when another plugin created the lock file, shorter interval to act timely
+                : 500;  // interval when this plugin created the lock file, longer interval to save resources
 
         const conversationOperations = getConversationOperations();
 
@@ -82,20 +90,20 @@ export async function multiEditCoordinator(
                 );
 
                 const latestConversation = JSON.parse(latestJson);
-
+    
                 if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
-
                     clearInterval(pollForAssistantUpdate);
 
                     // false = another plugin created the lock → 20ms
                     // true/null = this plugin created it or no lock was present → 2000ms
                     const delay =
                         getLockFileOriginatesFromThisPlugin(lockFile) === false
-                            ? 100
+                            ? 10
                             : 2000;
                 
                     // This timeout is to circumvent LM Studio's behavior
                     setTimeout(async () => {
+                        // console.log("=====PM OPERATION COMMENCED======", Date.now())
                         try {
                             const latestJson = await readFile(
                                 conversationFile,
@@ -158,7 +166,7 @@ export async function multiEditCoordinator(
                                 JSON.stringify(latestConversation, null, 2),
                                 "utf-8",
                             );
-
+                            // console.log("=====PM OPERATION FINISHED======", Date.now())
                         } catch (error) {
                             console.error(
                                 "Error during delayed memory seed cleanup:",
@@ -166,8 +174,6 @@ export async function multiEditCoordinator(
                             );
                         } finally {
                             try {
-                                await unlink(lockFile);
-                                console.log("=========lock removed by PM========")
                                 // Break the cycle, Exit memory save state by resetting to defaults
                                 if(exitRequested === true) {
                                     resetPendingSaveMemory();
@@ -175,6 +181,7 @@ export async function multiEditCoordinator(
                             } catch {
                                 // ignore
                             } finally {
+                                releaseLock(lockFile);
                                 setLockFileOriginatesFromThisPlugin(lockFile, null);
                                 for (const operation of conversationOperations) {
                                     if (operation.name === "tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction") {
@@ -202,5 +209,61 @@ export async function multiEditCoordinator(
     } catch (error) {
         
         throw new Error(`Error modifying conversation file: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+async function createACoordinationReadyFile(
+    conversation: any,
+    conversationFile: string,
+): Promise<void> {
+    const enabledPluginsArray = conversation.plugins;
+
+    const hasContextCleanup = enabledPluginsArray.some(
+        (plugin: string) => plugin.includes("context-cleanup"),
+    );
+
+    const hasPersistingMemories = enabledPluginsArray.some(
+        (plugin: string) => plugin.includes("persisting-memories"),
+    );
+
+    const shouldCoordinateWithContextCleanup =
+        hasContextCleanup && hasPersistingMemories;
+
+    const readyFile = `${conversationFile}.persisting-memories-final-write.ready`;
+
+    if (shouldCoordinateWithContextCleanup) {
+        try {
+            const handle = await open(readyFile, "wx");
+            await handle.close();
+
+            // console.log(
+            //     "===== PM final-write ready file created =====",
+            //     readyFile,
+            //     Date.now()
+            // );
+        } catch (error) {
+            const fsError = error as NodeJS.ErrnoException;
+
+            if (fsError.code !== "EEXIST") {
+                throw error;
+            }
+
+            await unlink(readyFile);
+
+            // console.log(
+            //     "===== stale PM final-write ready file removed =====",
+            //     readyFile,
+            //     Date.now()
+            // );
+
+            const handle = await open(readyFile, "wx");
+            await handle.close();
+
+            // console.log(
+            //     "===== PM final-write ready file recreated =====",
+            //     readyFile,
+            //     Date.now()
+            // );
+        }
     }
 }

@@ -34,7 +34,7 @@ In my opinion though this explicit version is far better. Even if you conflict w
 - [Technical Details](#technical-details)
 - [Limitations or Notes](#limitations-or-notes)
 
-> If you've already read my [Original Plugin's](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories) Readme, this will be the exact same functionality, just some pictures were updated/added and wording corrections fixed. Below is a picture of the new save memory mode. My notes section will elaborate on anything else. Updated/New sections are marked in their sections.
+> If you've already read my [Original Plugin's](https://github.com/anh-vudinh/LM-Studio_Plugin-Persisting-Memories) Readme, this will be the exact same functionality. Just a different method to achieve the same goal. Better in my honest opinion. Some pictures were updated/added and wording corrections fixed. Below is a picture of the new save memory mode. My notes section will elaborate on anything else. Updated/New sections are marked in their sections.
 
 <details>
 <summary>Click to expand image of how the new Save Memory Requested Chat looks</summary>
@@ -170,9 +170,9 @@ If a message # failed to append, the message can still be chosen by the save mem
 
 - The multi edit coordinator I created is a key part to this working with less overhead. Instead of independently executing individual write functions one by one with each one carrying sometimes duplicated overhead, the coordinator figures out which functions want to execute, gathers their parameters and does it all in one chained action. I had to refactor a lot of exisiting code to functions usable by the coordinator, but it was better than rewriting all the logics all over again. Trade off was a little more obscurity in the flow of each function, but I did my best trying to communicate ambiguity with the descriptive function names and comments left behind.
 
-- The file lock I created is key to letting this plugin work with my other cleanup plugin. If other plugins utilize the same file locking mechanic this would be compatible with those plugins too.
+- The file lock I created is key to letting this plugin work with my other cleanup plugin. If other plugins utilize the same file locking mechanic this would be compatible with those plugins too. The file .ready is also key to forcing the Context Cleanup to give priority of execution to Persisting Memories, otherwise CC reaches the lock creation 5-8ms faster on my system which may cause bugs like cleaning up messages that were required for the memory creation/associations.
 
-- Why there's a toolsProvider.ts even if these explicity functions aren't handled by tools anymore? - LM Studio did not give me a native way to poll changes real-time to the `Delete Memory` text field, promptPreprocessor is limited to when the user fires off a new user message so it doesn't work. The only way to achieve real-time variable monitoring was to keep the toolsProvider enabled and letting the memory deletion trigger logic exist there.
+- Why is there a toolsProvider.ts even if these explicity functions aren't handled by tools anymore? - LM Studio did not give me a native way to poll changes real-time to the `Delete Memory` text field, promptPreprocessor is limited to when the user fires off a new user message so it doesn't work. The only way to achieve real-time variable monitoring was to keep the toolsProvider enabled and letting the memory deletion trigger logic exist there.
 
 > Old Section
 - Injected context will be hidden from the user, but visible to the assistant. User can ask the assistant to read out the injected memory if you wish to see it.
