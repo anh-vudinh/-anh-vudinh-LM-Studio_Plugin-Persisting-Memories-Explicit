@@ -1,4 +1,4 @@
-# Persisting Memories Plugin
+# Persisting Memories Explicit Plugin
 
 - **This Plugin** - [GithHub - Explicit](https://github.com/anh-vudinh/-anh-vudinh-LM-Studio_Plugin-Persisting-Memories-Explicit) | [LMStudio](https://lmstudio.ai/anhuvdinh/persisting-memories-explicit)
 
