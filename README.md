@@ -1,4 +1,5 @@
-# Persisting Memories Explicit Plugin
+# Persisting Memories Explicit Plugin for LM Studio
+
 
 - **This Plugin** - [GitHub - Explicit](https://github.com/anh-vudinh/-anh-vudinh-LM-Studio_Plugin-Persisting-Memories-Explicit) | [LMStudio](https://lmstudio.ai/anhuvdinh/persisting-memories-explicit)
 
@@ -105,7 +106,7 @@ To use, while the plugin is enabled, type to the model: `"save memory <message #
 
 When the user sees a message they wish to keep as a memory, they can call on the `save_memory` tool by saying this to the assistant:
 
-1. User says: `save memory #`, category **category_name**, name **memory_name**
+1. User says: `save memory #`, category <**category_name**>, name <**memory_name**>
    - `save memory message #` works too.
    - Usable delimiters are `;` or `,` or `.`
    - Keywords required as a prefix to be included are `category` and/or `name`.
@@ -143,18 +144,21 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 <img src="chat-message-N.jpg" alt="Image of Chat Message">
 
-While enabled, the plugin will append a message # after each of the assistant's responses. This numbering makes it easier for users to refer to a specific exchange when asking to save a memory. If a message # failed to append, the message can still be chosen by the `save memory` command — just best-guess which message # it is based off the order successful message #s appended onto other messages.
+While enabled, the plugin will append a message # after each of the assistant's responses. This numbering makes it easier for users to refer to a specific exchange when asking to save a memory. If a message # failed to append, the message can still be chosen by the `save memory` command — just best-guess which message # it is based off the ordering of successful message #s appended onto other messages.
 
 
 ## Technical Details
 
-> Updated
-- Removal polling: When triggering memory seed edits, appending message # to the assistant message, and save memory commands that are missing fields to be provided, polls the conversation file every `100ms` or `500ms` depending on the condition if the `.lock` file originated from another plugin or its own plugin. The more aggressive polling is when the `.lock` belonged to another plugin — this way this plugin can act quicker to an external `.lock` release.
+> New
+- Multi-Edit Coordinator: This coordinator now oversees the write actions, so there are not multiple read/write actions repeated to fulfill one request at a time. Now that responsibilities were taken away from the model serving as the middleman, these things must be explicitly handled in the backend. I had to refactor a lot of existing code into functions usable by the coordinator, but it was better than rewriting all the logics from scratch. Trade-off: a little more obscurity in the flow of each function, but I did my best trying to communicate ambiguity with descriptive function names and comments left behind.
 
 > New
-- Multi-Edit Coordinator: This coordinator now oversees the write actions, so there are not multiple read/write actions repeated to fulfill one request at a time. Now that responsibilities were taken away from the model serving as the middleman, these things must be explicitly handled in the backend. I had to refactor a lot of existing code into functions usable by the coordinator, but it was better than rewriting all the logics all over again. Trade-off: a little more obscurity in the flow of each function, but I did my best trying to communicate ambiguity with descriptive function names and comments left behind.
-- `file_name.lock`: Lock files were added for cross-plugin compatibility with my Context Cleanup tool. This counters race conditions while a `conversation.json` is being updated/modified (written) — the lock makes the loser wait for its turn while the winner gets priority to complete their task.
 - `file_name-persisting-memories-final-write.ready` is now a coordination file created within the conversation folder to let PM catch up to the CC plugin and take the lead at executing its functions first. Persisting Memories plugin creates the `.ready`; Context Cleanup is expected to remove it. There may be abandoned `.ready` leftover files if your model crashes — they're 0KB so they just exist without any actual content. You may want to manually clean up any abandoned `.ready` files if you wish they're no longer relevant. Putting an automatic cleaner in one of the plugins would be unnecessary overhead.
+
+> Updated
+- `file_name.lock`: Lock files were added for cross-plugin compatibility with my Context Cleanup tool. This counters race conditions while a `conversation.json` is being updated/modified (written) — the lock makes the loser wait for its turn while the winner gets priority to complete their task.
+
+- Removal polling: When triggering memory seed edits, appending message # to the assistant message, and save memory commands that are missing fields to be provided, polls the conversation file every `100ms` or `500ms` depending on the condition if the `.lock` file originated from another plugin or its own plugin. The more aggressive polling is when the `.lock` belonged to another plugin — this way this plugin can act quicker to an external `.lock` release.
 - A `memories` folder will be created at `C:\Users\USERNAME\.lmstudio`, and a `.json` file that retains the relationship between the chat session and its conversation file will be stored in `C:\Users\USERNAME\.lmstudio\conversations`.
 - Injection markers: Memories will be injected within blocks of `BEGIN` and `END` markers containing the memory seed category/memory_name. These markers allow for later removal of the memory.
 - Internal Chat ID: The preprocessor will append a one-time InternalChatID `[ICID]` to mark the chat session. This marker helps identify the session and tie it to the corresponding conversation file. I've added fail-safes to recover the `[ICID]` marker when users purposely or accidentally delete the user message which contained the tag.
@@ -162,6 +166,20 @@ While enabled, the plugin will append a message # after each of the assistant's 
 - LM Studio also reinitializes plugins whenever it decides to, so reliable long-term storage of variables in outer scopes is not fully reliable and just used temporarily for the turn or as long as they're available. That includes storing current values in the Config Schematics. When values are lost, the backend code will re-establish them when needed.
 - Path safety: Memory names are normalized, but not to correct misspellings. It's easiest to copy and paste the memory name from the list displayed in Available Memories into the text field of Memories to Inject.
 - In-memory pool: The available memory pool is kept in memory and updated when files are deleted. Plugin UI updates may be delayed because of LM Studio plugin behavior, but on the backend these values are properly updated.
+
+## Limitations or Notes
+
+> New Section
+- I had only 3 options to fully execute this: rely on the unreliable model, modify the conversation.json real-time, or use `predictionLoopHandler`.
+   1. **PredictionLoopHandler** was a complete flop — it overtook and dictated its own custom structure, making it less widely compatible and affecting tool calls. The time spent experimenting wasn't wasted though and did play a very small part in my final route.
+   2. **Rely on the unreliable model** — that was my original "easier" approach. On most days the model worked fine; on bad days it refused to comply with instructions and everything important became suggestions up to self-interpretation, finding leeway in definitive language, and repeated patterns became established rules rather than actually following the rules given.
+   3. **Real-time conversation.json editing** — the most complex method which had to respect what already is and build around the flaws and natively lacking features. The only downside to this was the 2-second time window mandatory at the last token of the assistant's response. It's really imperceptible in real-world situations. The signifier that the backend has completed is when you see a message # appended after the assistant's message. If you mess it up, no harm no foul — the backend logic won't break and things will continue fine in future turns.
+
+- The multi-edit coordinator I created is a key part to this working with less overhead. Instead of independently executing individual write functions one by one with each one carrying sometimes duplicated overhead, the coordinator figures out which functions want to execute, gathers their parameters, and does it all in one chained action. I had to refactor a lot of existing code into functions usable by the coordinator, but it was better than rewriting all the logics all over again. Trade-off: a little more obscurity in the flow of each function, but I did my best trying to communicate ambiguity with descriptive function names and comments left behind.
+
+- The file lock I created is key to letting this plugin work with my other cleanup plugin. If other plugins utilize the same file locking mechanic, this would be compatible with those plugins too. The `.ready` file is also key to forcing Context Cleanup to give priority of execution to Persisting Memories — otherwise CC reaches the lock creation 5–8ms faster on my system which may cause bugs like cleaning up messages that were required for the memory creation/associations.
+
+- Why is there a `toolsProvider.ts` even if these explicit functions aren't handled by tools anymore? LM Studio did not give me a native way to poll changes real-time to the **Delete Memory** text field — promptPreprocessor is limited to when the user fires off a new user message so it doesn't work. The only way to achieve real-time variable monitoring was to keep the toolsProvider enabled and letting the memory deletion trigger logic exist there.
 
 > Old Section
 - Injected context will be hidden from the user, but visible to the assistant. User can ask the assistant to read out the injected memory if you wish to see it.

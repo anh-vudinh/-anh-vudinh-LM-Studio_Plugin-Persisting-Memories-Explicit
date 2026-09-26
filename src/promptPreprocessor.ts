@@ -262,6 +262,24 @@ export async function promptPreprocessor(
     );
 }
 
+/**             ______________________________________           
+ *             |                                      |
+ *             | LMSTUDIO LOVES TO DISCONNECT PLUGINS |
+ *             |______________________________________|
+ * 
+ * FLOW OF SCAN →  promptProcessorScanHistoryForID()       →       promptProcessorRecoverChatID()           →          (GENERATE BRAND NEW ICID?)        →       promptProcessorScanForConversationFile()
+ *                             ↓                                                ↓                                                                                                    ↓
+ *                    (ICID FOUND YES/NO)                        (ICID already in memory? YES/NO)                                                              scanForConversationFileThruRelationshipFile()         → (CHECK AGAINST in memory ICID and relationship ICIDs | FOUND CONVO FILE YES/NO) → (CHECK AGAINST WD Base Name in Relationship file | FOUND CONVO YES/NO)
+ *                                                                              ↓                                                                                                    ↓
+ *                                                      scanForConversationFileThruBaseNameOfWorkingDirectory()                                              scanForConversationFileThruBaseNameOfWorkingDirectory() → (CHECK IF WD Base is a convo file, access it to check for in memory ICID | FOUND CONVO YES/NO) → (Fuzzy match clientInput to userText | FOUND CONVO YES/NO)
+ *                                                                              ↓                                                                                                    ↓
+ *                                                         (CONFIRMED CONVO FILE && || FOUND ICID YES/NO)                                                 scanForConversationFileThruFullConversationDirectoryScan() → (CHECK ALL convo files Match in memory ICID | FOUND YES/NO) → (Fuzzy match clientInput to userText | FOUND CONVO YES/NO) → (AUTHORITY TO UPDATE stale relationships once in memory ICID and Convo are known but mismatched)
+ *                                                                                                                                                                                   ↓
+ *                                                                                                                                                                        refreshRelationshipFile()                  → (If convo is known, ICID in convo is missing, relationship has ICID and convo paired, repurpose abandoned ICID & renew relationship. Overwrite in memory internalChatID variable with renewed ICID. This is to overwrite the newly generated ICID logic). 
+ *                                                                                                                                                                                   ↓
+ *                                                                                                                                *** CONVERSATION FILE AND ICID SHOULD NOW BE KNOWN & LINKED OTHERWISE THE CONVERSATION DOES NOT EXIST ***
+ */
+
 /**
  * Try to recover InternalChatID tag if the users deleted it from chat.
  */
