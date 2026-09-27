@@ -239,7 +239,7 @@ export async function promptPreprocessor(
         };
 
         return (
-            `${userText}.` +
+            `${userText}.                          ` +
             `${injectedContext}[END OF MEMORIES] ` +
             `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
         );
@@ -257,7 +257,7 @@ export async function promptPreprocessor(
     }
 
     return (
-        `${userText}.` +
+        `${userText}.                          ` +
         `${createNewInternalChatID? `[ICID: ${internalChatID}] Ignore this ICID tag. ` : ""}`
     );
 }
