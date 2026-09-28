@@ -22,10 +22,10 @@ const SAVE_MEMORY_REGEX =
     /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b(?:\s+message|msg)?\s*(\d+)/i;
 
 const CATEGORY_EXTRACT_REGEX =
-    /^(?:category|categroy|categary|categry|catgry|catagory|catgory|categoy)\b\s+(?:is\s+)?(.+)$/i;
+    /^(?:memory\s*)?(?:category|categroy|categary|categry|catgry|catagory|catgory|categoy)\b\s+(?:is\s+)?(.+)$/i;
 
 const NAME_EXTRACT_REGEX =
-    /^(?:name|nmae|nam|nme)\b\s+(?:is\s+)?(.+)$/i;
+    /^(?:memory\s*)?(?:name|nmae|nam|nme)\b\s+(?:is\s+)?(.+)$/i;
 
 const EXIT_SAVE_MEMORY_REGEX =
     /\bexit\b\s+(?:save|sav|sve|sv|store|remember|persist)\b\s+(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i;
