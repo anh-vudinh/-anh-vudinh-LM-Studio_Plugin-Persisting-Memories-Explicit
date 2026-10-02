@@ -17,12 +17,43 @@ export async function toolsProvider(
   */
   const normalizedMemoryFileToDelete = memoryFileToDelete.trim()
 
-  if (normalizedMemoryFileToDelete !== "" && 
+  const wildcardMatch =
+    normalizedMemoryFileToDelete.match(
+        /^([^/]+)\/\*\.json$/i,
+    );
+
+  if (
+    wildcardMatch &&
+    normalizedMemoryFileToDelete !== ""
+  ) {
+      // Handle wildcard deletion
+      const category = wildcardMatch[1];
+
+      const memorySeedsToDelete =
+          getMemorySeedsPool().filter(
+              (memorySeed) =>
+                  memorySeed.startsWith(
+                      `${category}/`,
+                  ),
+          );
+        
+      // Category does not exist in the memory pool → do nothing
+      if (memorySeedsToDelete.length !== 0) {
+        for (const memorySeed of memorySeedsToDelete) {
+            await deleteMemorySeedFile(memorySeed);
+            
+            console.log("deleted ", memorySeed);
+        }
+      }
+
+  } else if (
+      // Normal file deletion
+      normalizedMemoryFileToDelete !== "" &&
       getMemorySeedsPool().includes(normalizedMemoryFileToDelete)
   ) {
+      await deleteMemorySeedFile(normalizedMemoryFileToDelete);
 
-    await deleteMemorySeedFile(normalizedMemoryFileToDelete);
-    console.log("deleted ", normalizedMemoryFileToDelete)
+      console.log("deleted ", normalizedMemoryFileToDelete);
   }
 
   return [];

@@ -4,24 +4,12 @@ import type { PromptPreprocessorController } from "@lmstudio/sdk";
 
 let currentMemorySeedsPool: readonly string[] = [];
 let currentMemorySeedsSelected: readonly string[] = [];
-let currentConversationFileName = "";
 
 export function createConfig(
     memorySeedsPool: readonly string[],
     memorySeedsSelected: readonly string[],
-    conversationFileName: string,
 ) {
     return createConfigSchematics()
-        .field(
-            "conversationFileName",
-            "string",
-            {
-                displayName: "Conversation File Name",
-                subtitle: "Required for memory removal. Digits only. The number associated with the conversation.json file for this chat session.",
-                nonConfigurable: true,
-            },
-            conversationFileName,
-        )
         .field(
             "deleteMemorySeedsFile",
             "string",
@@ -29,7 +17,8 @@ export function createConfig(
                 displayName: "Delete Memory",
                 subtitle: " *WARNING* This does not remove already injected memories. This is a final action to permanently delete a memory.",
                 warning: "This memory will be permanently deleted.",
-                placeholder: "Full name the memory to delete. Copy/paste from available memories.",
+                hint: "Optional: <category/*.json> will delete the entire category.",
+                placeholder: "Full name of the memory to delete. Copy/paste from available memories.",
             },
             "",
         )
@@ -61,17 +50,14 @@ export function createConfig(
 export let configSchematics = createConfig(
     currentMemorySeedsPool,
     currentMemorySeedsSelected,
-    currentConversationFileName,
 );
 
 export function setConfigSchematics({
     memorySeedsPool,
     memorySeedsSelected,
-    conversationFileName,
 }: {
     memorySeedsPool?: readonly string[];
     memorySeedsSelected?: readonly string[];
-    conversationFileName?: string;
 }): void {
     if (memorySeedsPool !== undefined) {
         currentMemorySeedsPool = memorySeedsPool;
@@ -81,14 +67,9 @@ export function setConfigSchematics({
         currentMemorySeedsSelected = memorySeedsSelected;
     }
 
-    if (conversationFileName !== undefined) {
-        currentConversationFileName = normalizeJsonFileName(conversationFileName);
-    }
-
     configSchematics = createConfig(
         currentMemorySeedsPool,
         currentMemorySeedsSelected,
-        currentConversationFileName,
     );
 }
 
@@ -106,29 +87,6 @@ export function getController(): PromptPreprocessorController {
     return ctl;
 }
 
-export function getCurrentConversationFileName(): string {
-    return currentConversationFileName;
-}
-
-// ============================================================
-// Lock File Origin States
-// ============================================================
-
-const lockFileOwnership = new Map<string, boolean | null>();
-
-export function setLockFileOriginatesFromThisPlugin(
-    lockFile: string,
-    value: boolean | null,
-): void {
-    lockFileOwnership.set(lockFile, value);
-}
-
-export function getLockFileOriginatesFromThisPlugin(
-    lockFile: string,
-): boolean | null {
-    return lockFileOwnership.get(lockFile) ?? null;
-}
-
 // ============================================================
 // SAVE MEMORY STATE
 // ============================================================
@@ -138,6 +96,7 @@ export interface PendingSaveMemory {
     memoryNumber: number | null;
     category: string | null;
     fileName: string | null;
+    memoryNumberEndRange: number | null;
 }
 
 let pendingSaveMemory: PendingSaveMemory = {
@@ -145,6 +104,7 @@ let pendingSaveMemory: PendingSaveMemory = {
     memoryNumber: null,
     category: null,
     fileName: null,
+    memoryNumberEndRange: null,
 };
 
 export function getPendingSaveMemory(): PendingSaveMemory {
@@ -166,6 +126,7 @@ export function resetPendingSaveMemory(): void {
         memoryNumber: null,
         category: null,
         fileName: null,
+        memoryNumberEndRange: null,
     };
 }
 
@@ -206,4 +167,73 @@ export function getConversationOperations(): ConversationOperation[] {
 
 export function clearConversationOperations(): void {
     conversationOperations = [];
+}
+
+// ============================================================
+// Conversation File Name & ICID States
+// ============================================================
+
+let conversationFileName = "";
+let internalChatID = "";
+
+export function setConversationFileName(value: string): void {
+  conversationFileName = normalizeJsonFileName(value);
+}
+
+export function getConversationFileName(): string {
+  return conversationFileName;
+}
+
+export function setInternalChatID(value: string): void {
+  internalChatID = value;
+}
+
+export function getInternalChatID(): string {
+  return internalChatID;
+}
+
+// ============================================================
+// Unified REGEX Patterns
+// ============================================================
+const SAVE_MEMORY_REGEX =
+    /\b(?:save|sav|sve|sv|store|remember|persist)\s*(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\s*(?:message|msg)?\s*(\d+)/i;
+
+const MULTI_SAVE_MEMORY_REGEX =
+    /\b(?:save|sav|sve|sv|store|remember|persist)\s*(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\s*(?:message|msg|messages|msgs)?\s*(\d+)\s*(?:through|thru|thrugh|thruogh|thorugh|thurogh|to|too)\s*(\d+)/i;
+
+// Make sure this scrubber conforms to the expected words used in the save and multi save memory patterns
+const CLEAN_USER_INPUT_SAVE_MEMORY_REGEX =
+    /\b(?:save|sav|sve|sv|store|remember|persist)\s*(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\s*(?:message|msg|messages|msgs)?\s*\d+(?:\s*(?:through|thru|thrugh|thruogh|thorugh|thurogh|to|too)\s*\d+)?\s*[;,.]?\s*/gi;
+
+const CATEGORY_EXTRACT_REGEX =
+    /^(?:the\s+)?(?:memory|mem|mm|mmry|memry|mry|mmy|memy)?\s*(?:category|categroy|categary|categry|catgry|catagory|catgory|categoy)\b\s+(?:is\s+)?(.+)$/i;
+
+const NAME_EXTRACT_REGEX =
+    /^(?:the\s+)?(?:memory|mem|mm|mmry|memry|mry|mmy|memy)?\s*(?:name|nmae|nam|nme)\b\s+(?:is\s+)?(.+)$/i;
+
+const EXIT_SAVE_MEMORY_REGEX =
+    /\bexit\b\s+(?:save|sav|sve|sv|store|remember|persist)\b\s+(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i;
+
+export function getSaveMemoryRegex(): RegExp {
+    return SAVE_MEMORY_REGEX;
+}
+
+export function getMultiSaveMemoryRegex(): RegExp {
+    return MULTI_SAVE_MEMORY_REGEX;
+}
+
+export function getCategoryExtractRegex(): RegExp {
+    return CATEGORY_EXTRACT_REGEX;
+}
+
+export function getNameExtractRegex(): RegExp {
+    return NAME_EXTRACT_REGEX;
+}
+
+export function getExitSaveMemoryRegex(): RegExp {
+    return EXIT_SAVE_MEMORY_REGEX;
+}
+
+export function getCleanUserInputSaveMemoryRegex(): RegExp {
+    return CLEAN_USER_INPUT_SAVE_MEMORY_REGEX;
 }

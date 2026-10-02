@@ -1,7 +1,8 @@
 import { memoryStore } from "./memoryStore";
+import type { MemorySeed } from "./memoryStore";
 import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
-import { isEligibleAssistantMessage } from "./conversationReader"
+import { cleanUserInput, isEligibleAssistantMessage } from "./conversationReader"
 
 import {
     addConversationOperation,
@@ -11,6 +12,9 @@ import {
     getPendingSaveMemory,
     resetPendingSaveMemory,
     PendingSaveMemory,
+    getCategoryExtractRegex,
+    getNameExtractRegex,
+    getExitSaveMemoryRegex,
 } from "./config"
 
 // ============================================================
@@ -19,13 +23,16 @@ import {
 
 // Save-memory command.
 const SAVE_MEMORY_REGEX =
-    /\b(?:save|sav|sve|sv|store|remember|persist)\b.*?\b(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b(?:\s+message|msg)?\s*(\d+)/i;
+    /\b(?:save|sav|sve|sv|store|remember|persist)\s*(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\s*(?:message|msg)?\s*(\d+)/i;
+
+const MULTI_SAVE_MEMORY_REGEX =
+    /\b(?:save|sav|sve|sv|store|remember|persist)\s*(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\s*(?:message|msg|messages|msgs)?\s*(\d+)\s*(?:through|thru|thrugh|thruogh|to|too)\s*(\d+)/i;
 
 const CATEGORY_EXTRACT_REGEX =
-    /^(?:memory\s*)?(?:category|categroy|categary|categry|catgry|catagory|catgory|categoy)\b\s+(?:is\s+)?(.+)$/i;
+    /^(?:the\s+)?(?:memory|mem|mm|mmry|memry|mry|mmy|memy)?\s*(?:category|categroy|categary|categry|catgry|catagory|catgory|categoy)\b\s+(?:is\s+)?(.+)$/i;
 
 const NAME_EXTRACT_REGEX =
-    /^(?:memory\s*)?(?:name|nmae|nam|nme)\b\s+(?:is\s+)?(.+)$/i;
+    /^(?:the\s+)?(?:memory|mem|mm|mmry|memry|mry|mmy|memy)?\s*(?:name|nmae|nam|nme)\b\s+(?:is\s+)?(.+)$/i;
 
 const EXIT_SAVE_MEMORY_REGEX =
     /\bexit\b\s+(?:save|sav|sve|sv|store|remember|persist)\b\s+(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i;
@@ -39,9 +46,25 @@ function extractCategory(segment: string): string | null {
     return match?.[1]?.trim() ?? null;
 }
 
-function extractFileName(segment: string): string | null {
-    const match = segment.match(NAME_EXTRACT_REGEX);
-    return match?.[1]?.trim() ?? null;
+// reject wildcard trying to be used as a name
+function extractFileName(
+    segment: string,
+): string | null {
+
+    const match =
+        segment.match(NAME_EXTRACT_REGEX);
+
+    const fileName =
+        match?.[1]?.trim() ?? null;
+
+    if (
+        fileName === "*" ||
+        fileName === "*.json"
+    ) {
+        return null;
+    }
+
+    return fileName;
 }
 
 // ============================================================
@@ -82,6 +105,25 @@ export async function processMessage(
         setPendingSaveMemory({
             active: true,
             memoryNumber: Number(saveMatch[1]),
+            memoryNumberEndRange: null,
+        });
+        setPreviousTurnSavingState(true);
+    }
+
+    // --------------------------------------------------------
+    // Check whether this message contains a save-memory range of messages command.
+    // --------------------------------------------------------
+
+    const multiSaveMatch = userText.match(MULTI_SAVE_MEMORY_REGEX);
+
+    if (multiSaveMatch) {
+        const startMemoryNumber = Number(multiSaveMatch[1]);
+        const endMemoryNumber = Number(multiSaveMatch[2]);
+
+        setPendingSaveMemory({
+            active: true,
+            memoryNumber: startMemoryNumber,
+            memoryNumberEndRange: endMemoryNumber,
         });
         setPreviousTurnSavingState(true);
     }
@@ -163,14 +205,42 @@ export async function processMessage(
         fileName: updated.fileName === null,
     };
 
+
     // ========================================================
-    // EVERYTHING IS PRESENT
+    // EVERYTHING IS PRESENT (Multi Seed Save)
     // ========================================================
 
     if (
         updated.memoryNumber !== null &&
         updated.category !== null &&
-        updated.fileName !== null
+        updated.fileName !== null &&
+        updated.memoryNumberEndRange !== null
+    ) {
+
+        await appendSaveMemoryTextAtEndOfConversationJson(exitRequested);
+
+        await multiSaveMemory({
+            startMemoryNumber: updated.memoryNumber,
+            endMemoryNumber: updated.memoryNumberEndRange,
+            category: updated.category,
+            fileName: updated.fileName,
+            },
+        );
+
+        return {
+            action: "saved",
+        };
+    }
+
+    // ========================================================
+    // EVERYTHING IS PRESENT (Single Seed Save)
+    // ========================================================
+
+    if (
+        updated.memoryNumber !== null &&
+        updated.category !== null &&
+        updated.fileName !== null &&
+        updated.memoryNumberEndRange === null
     ) {
 
         await appendSaveMemoryTextAtEndOfConversationJson(exitRequested);
@@ -186,7 +256,6 @@ export async function processMessage(
             action: "saved",
         };
     }
-
 
     // ========================================================
     // STILL WAITING FOR SOMETHING
@@ -405,14 +474,17 @@ async function saveMemory({
 
         // Added some tolerance because users technically could delete all
         // their user messages before asking the model to save a memory
-        const rootInput =
-            association.rootInput?.trim() ||
-            "original user intention/topic could not be found";
+        const cleanedRootInput = cleanUserInput(association.rootInput?.trim());
 
-        const directInput =
-            association.directInput?.trim() ||
-            association.rootInput?.trim() ||
-            "original user message could not be found";
+        const rootInput = cleanedRootInput !== ""
+        ? cleanedRootInput 
+        : "original user intention/topic was fully scrubbed";
+
+        const cleanedDirectInput = cleanUserInput(association.directInput?.trim());
+
+        const directInput = cleanedDirectInput !== ""
+        ? cleanedDirectInput
+        : "original user message was fully scrubbed";
 
         await memoryStore.saveSeed(
             category,
@@ -445,6 +517,99 @@ async function saveMemory({
     }
 }
 
+async function multiSaveMemory({
+    startMemoryNumber,
+    endMemoryNumber,
+    category,
+    fileName
+}: {
+    startMemoryNumber: number,
+    endMemoryNumber: number,
+    category: string,
+    fileName: string,
+}): Promise<void> {
+
+    const ctl = getController();
+
+    try {
+        const history = await getCurrentConversationHistory();
+
+        const seeds: MemorySeed[] = [];
+
+        for (
+            let memoryNumber = startMemoryNumber;
+            memoryNumber <= endMemoryNumber;
+            memoryNumber++
+        ) {
+            const association = await associateAssistantResponse(
+                ctl.client,
+                history,
+                memoryNumber,
+            );
+
+            const cleanedRootInput = cleanUserInput(association.rootInput?.trim());
+
+            const cleanedDirectInput = cleanUserInput(association.directInput?.trim());
+
+            if (
+                isMetadataOnlyInput(cleanedDirectInput)
+            ) {
+                continue;
+            }
+
+            // Only save seeds that have both root and direct inputs
+            if (
+            cleanedRootInput !== "" && 
+            cleanedDirectInput !== ""
+            ) {
+            seeds.push({
+                date: new Date().toISOString(),
+                root_input: cleanedRootInput,
+                direct_input: cleanedDirectInput,
+                output: association.assistantResponse,
+            });
+            }
+
+            // Root Input fully scrubbed but direct input is still usable
+            // Just use DirectInput to be a placeholder for RootInput
+            if (
+            cleanedRootInput === "" &&
+            cleanedDirectInput !== ""
+            ) {
+            seeds.push({
+                date: new Date().toISOString(),
+                root_input: cleanedDirectInput,
+                direct_input: cleanedDirectInput,
+                output: association.assistantResponse,
+            });
+            }
+
+            // UserInput unusable, skip the save
+        }
+
+        // All seeds go into the same file in one read/write operation.
+        // startMemoryNumber satisfies the existing save-memory-number check.
+        await memoryStore.saveMultipleSeeds(
+            category,
+            fileName,
+            seeds,
+            startMemoryNumber,
+        );
+
+        await appendSaveMemoryTextAtEndOfConversationJson(false);
+
+    } catch (error) {
+        console.error(
+            "Error creating Memory Seed: " +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+
+    } finally {
+        setPreviousTurnSavingState(true);
+        resetPendingSaveMemory();
+    }
+}
+
 /**
  * Constructors for the Save Memory Message strings
  * For Missing Fields - Successful memory save - Save memory early abort
@@ -456,7 +621,8 @@ export async function constructAssistantReplySaveMemory(
     const lines: string[] = [];
 
     lines.push(
-        `**[Message ${pendingSaveMemory.memoryNumber}]** was successfully saved as ***${pendingSaveMemory.category}/${pendingSaveMemory.fileName}.json***`
+        `**[ Message ${pendingSaveMemory.memoryNumber}${pendingSaveMemory.memoryNumberEndRange !== null? ` - ${pendingSaveMemory.memoryNumberEndRange}` : ""} ]**`+
+        ` was successfully saved as ***${pendingSaveMemory.category}/${pendingSaveMemory.fileName}.json***`
     );
 
     return lines;
@@ -528,4 +694,35 @@ export async function constructAssistantReplySaveMemoryExit(
     );
 
     return lines;
+}
+
+function isMetadataOnlyInput(input: string): boolean {
+
+    // Regexes unified at config.ts
+    const CATEGORY_EXTRACT_REGEX = getCategoryExtractRegex();
+
+    const NAME_EXTRACT_REGEX = getNameExtractRegex();
+
+    const EXIT_SAVE_MEMORY_REGEX = getExitSaveMemoryRegex();
+
+    const normalized = input.trim();
+
+    if (EXIT_SAVE_MEMORY_REGEX.test(normalized)) {
+        return true;
+    }
+
+    const segments = normalized
+        .split(/[;,\.]/)
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+
+    if (segments.length === 0) {
+        return false;
+    }
+
+    return segments.every(
+        (segment) =>
+            CATEGORY_EXTRACT_REGEX.test(segment) ||
+            NAME_EXTRACT_REGEX.test(segment),
+    );
 }

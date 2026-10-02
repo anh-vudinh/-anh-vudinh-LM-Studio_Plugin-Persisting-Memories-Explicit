@@ -1,4 +1,5 @@
 import type { Chat, ChatMessage } from "@lmstudio/sdk";
+import { getCleanUserInputSaveMemoryRegex } from "./config";
 
 export interface ConversationMessage {
     /**
@@ -147,7 +148,7 @@ export function getAssistantResponse(
         return {
             messageNumber,
             arrayIndex,
-            content: cleanAssistantResponse(message.getText()),
+            content: message.getText(),
             raw: message,
         };
     }
@@ -349,6 +350,10 @@ export function cleanAssistantResponse(text: string): string {
 // Purposely left Formating Instruction clean up for compatibility even though this plugin does not use it anymore.
 export function cleanUserInput(text: string): string {
     return text
+        .replace(
+            getCleanUserInputSaveMemoryRegex(),
+            "",
+        )
         .replace(
             /Formatting Instruction:.*?:End of Instruction.?/g,
             "",

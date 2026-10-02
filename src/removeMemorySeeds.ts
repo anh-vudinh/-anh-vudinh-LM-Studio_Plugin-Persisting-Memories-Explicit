@@ -1,9 +1,5 @@
 import { removeMemorySeedFromSelected, updateMemorySeedsSelected } from "./memorySession";
-
-import {
-    addConversationOperation,
-    setConfigSchematics,
- } from "./config";
+import { addConversationOperation, setConfigSchematics } from "./config";
 
 /**
  * Flow is prompt preprocessor → removeMemorySeeds → multiEditCoordinator
@@ -102,6 +98,9 @@ function removeAllMemoryWrappers(latestConversation: any): void {
 /**
  * Remove only specific seeds. Leave the ones,
  * previously injected that are still selected alone.
+ * This returns a string but PE model dependent version returns void because the PEMD executes it's task during the 2 second wait timeout,
+ * after the message is already sent to the model. A return cannot be expected from a detached process. For this version we can still utilize
+ * the returned value.
  */
 async function memorySeedsCleanup(
     latestConversation: any,
@@ -159,7 +158,7 @@ async function memorySeedsCleanup(
     }
 
     // Seed removed success
-    console.log(`[removeMemorySeeds] Memory seeds [${memorySeedsToRemove.join(", ")}] successfully removed.`);
+    // console.log(`[removeMemorySeeds] Memory seeds [${memorySeedsToRemove.join(", ")}] successfully removed.`);
 
     return memorySeedsToRemove;
 }

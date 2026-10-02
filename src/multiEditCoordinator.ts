@@ -2,14 +2,8 @@ import { memoryStore } from "./memoryStore";
 import { join } from "node:path";
 import { tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction } from "./triggerSaveMemory";
 import { tryRemoveMemorySeedsTimeoutFunction } from "./removeMemorySeeds";
-
-import {
-    releaseLock,
-    normalizeJsonFileName,
-    acquireLock,
-    promptProcessorConstructMessageNumberTag
-} from "./promptPreprocessor";
-
+import { acquireLock, releaseLock } from "./acquireLockFile";
+import { promptProcessorConstructMessageNumberTag } from "./promptPreprocessor";
 
 import { 
     readFile, 
@@ -22,12 +16,10 @@ import {
     clearConversationOperations,
     getPreviousTurnSavingState,
     getConversationOperations,
-    setLockFileOriginatesFromThisPlugin,
     setPreviousTurnSavingState,
     resetPendingSaveMemory,
-    getLockFileOriginatesFromThisPlugin,
     getPendingSaveMemory, 
-    getCurrentConversationFileName 
+    getConversationFileName 
 } from "./config";
 
 export async function multiEditCoordinator(
@@ -36,7 +28,7 @@ export async function multiEditCoordinator(
     // console.log("========RUNNING MEC======",Date.now())
     const rootDirectory = await memoryStore.getRootDirectory();
 
-    const conversationFileName = getCurrentConversationFileName();
+    const conversationFileName = getConversationFileName();
 
     try{
         // Construct the path to the conversation file
@@ -47,7 +39,7 @@ export async function multiEditCoordinator(
 
         const conversationFile = join(
             conversationDirectory,
-            normalizeJsonFileName(conversationFileName),
+            conversationFileName,
         );
 
         // Prepare json file to be readable and assign to variable
@@ -60,22 +52,23 @@ export async function multiEditCoordinator(
         
         // Snapshotting assistantLastMessagedAt field (so watcher knows when model is finished with it's response)
         const originalAssistantLastMessagedAt = conversation.assistantLastMessagedAt;
+
+        // Lock created after we did the first read to establish the originalAssistantLastMessagedAt
+        const lockFile = `${conversationFile}.lock`;
+
+        const functionName = "multiEditCoordinator";
+
+        await acquireLock(lockFile, functionName);
+
         // console.log("========PM Conversation file read===", Date.now())
         // Coordinating Logic with Context-Cleanup Plugin
         // This plugin is ready after context cleanup is ready by around 8ms(my computer), instead of hard coding
         // it, this method will coordinate context-cleanup to create it's lock only after Presisting Memories plugin has been
         // forced to be the winner.
-        await createACoordinationReadyFile(conversation, conversationFile);
+        const shouldCoordinateWithContextCleanup = await createACoordinationReadyFile(conversation, conversationFile);
 
-        // Lock created after we did the first read to establish the originalAssistantLastMessagedAt
-        const lockFile = `${conversationFile}.lock`;
-
-        const lockOriginatesFromThisPlugin = getLockFileOriginatesFromThisPlugin(lockFile);
-
-        await acquireLock(lockFile);
-
-        const pollInterval = lockOriginatesFromThisPlugin === false
-                ? 500   // interval when another plugin created the lock file, shorter interval to act timely
+        const pollInterval = shouldCoordinateWithContextCleanup === true
+                ? 100   // interval when another plugin created the lock file, shorter interval to act timely
                 : 500;  // interval when this plugin created the lock file, longer interval to save resources
 
         const conversationOperations = getConversationOperations();
@@ -94,12 +87,10 @@ export async function multiEditCoordinator(
                 if (latestConversation.assistantLastMessagedAt !== originalAssistantLastMessagedAt) {
                     clearInterval(pollForAssistantUpdate);
 
-                    // false = another plugin created the lock → 20ms
-                    // true/null = this plugin created it or no lock was present → 2000ms
-                    const delay =
-                        getLockFileOriginatesFromThisPlugin(lockFile) === false
-                            ? 10
-                            : 2000;
+                    // If we're coordinating with the context cleanup plugin this plugin is expected to wait the 2000ms
+                    // If we're running any function that needs to edit the conversation file, we also need to wait the 2000ms,
+                    // which currently is every function.
+                    const delay = 2000;
                 
                     // This timeout is to circumvent LM Studio's behavior
                     setTimeout(async () => {
@@ -181,8 +172,8 @@ export async function multiEditCoordinator(
                             } catch {
                                 // ignore
                             } finally {
-                                releaseLock(lockFile);
-                                setLockFileOriginatesFromThisPlugin(lockFile, null);
+                                releaseLock(lockFile, functionName);
+
                                 for (const operation of conversationOperations) {
                                     if (operation.name === "tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction") {
                                         setPreviousTurnSavingState(true);
@@ -212,10 +203,11 @@ export async function multiEditCoordinator(
     }
 }
 
+// Returning a boolean indicating whether the context cleanup plugin is being used
 async function createACoordinationReadyFile(
     conversation: any,
     conversationFile: string,
-): Promise<void> {
+): Promise<boolean> {
     const enabledPluginsArray = conversation.plugins;
 
     const hasContextCleanup = enabledPluginsArray.some(
@@ -266,4 +258,5 @@ async function createACoordinationReadyFile(
             // );
         }
     }
+    return shouldCoordinateWithContextCleanup;
 }

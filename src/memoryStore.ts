@@ -134,97 +134,209 @@ export class MemoryStore {
         name: string,
         seed: MemorySeed,
         saveMemoryNumber: number,
-    ): Promise<void> {
+    ): Promise<boolean> {
         const directory = await this.initializeAndGetDirectory();
 
         const safeCategory = sanitizePathPart(category);
         const safeName = sanitizeFilename(name);
 
-        if(saveMemoryNumber === null) {
-            throw new Error("Memory save message number is invalid.");
+        if (saveMemoryNumber === null) {
+            return false;
         }
 
         if (!safeCategory) {
-            throw new Error("Memory category cannot be empty.");
+            return false;
         }
 
         if (!safeName) {
-            throw new Error("Memory Seed name cannot be empty.");
+            return false;
         }
 
         if (!seed.root_input.trim()) {
-            throw new Error("Memory Seed root input cannot be empty.");
+            return false;
         }
 
         if (!seed.direct_input.trim()) {
-            throw new Error("Memory Seed direct input cannot be empty.");
+            return false;
         }
 
         if (!seed.output.trim()) {
-            throw new Error("Memory Seed output cannot be empty.");
+            return false;
         }
 
-        const categoryPath = path.join(
-            directory,
-            safeCategory,
-        );
-
-        await fs.mkdir(categoryPath, {
-            recursive: true,
-        });
-
-        const filePath = path.join(
-            categoryPath,
-            `${safeName}.json`,
-        );
-
-        let seeds: MemorySeed[] = [];
-
         try {
-            const existing = await fs.readFile(
+            const categoryPath = path.join(
+                directory,
+                safeCategory,
+            );
+
+            await fs.mkdir(categoryPath, {
+                recursive: true,
+            });
+
+            const filePath = path.join(
+                categoryPath,
+                `${safeName}.json`,
+            );
+
+            let seeds: MemorySeed[] = [];
+
+            try {
+                const existing = await fs.readFile(
+                    filePath,
+                    "utf-8",
+                );
+
+                const parsed = JSON.parse(existing);
+
+                if (Array.isArray(parsed)) {
+                    seeds = parsed;
+                } else if (parsed && typeof parsed === "object") {
+                    seeds = [parsed as MemorySeed];
+                } else {
+                    return false;
+                }
+            } catch (error: any) {
+                if (error.code !== "ENOENT") {
+                    return false;
+                }
+            }
+
+            seeds.push(seed);
+
+            await fs.writeFile(
                 filePath,
+                JSON.stringify(seeds, null, 2),
                 "utf-8",
             );
 
-            const parsed = JSON.parse(existing);
+            const memorySeedName =
+                `${safeCategory}/${safeName}.json`;
 
-            if (Array.isArray(parsed)) {
-                seeds = parsed;
-            } else if (parsed && typeof parsed === "object") {
-                // Support the previous single-seed file format.
-                seeds = [parsed as MemorySeed];
-            } else {
-                throw new Error(
-                    `Memory Seed file "${filePath}" contains invalid JSON data.`,
-                );
+            const memorySeedsPool =
+                getMemorySeedsPool();
+
+            if (!memorySeedsPool.includes(memorySeedName)) {
+                setConfigSchematics({
+                    memorySeedsPool: [
+                        ...memorySeedsPool,
+                        memorySeedName,
+                    ],
+                });
             }
-        } catch (error: any) {
-            if (error.code !== "ENOENT") {
-                throw error;
-            }
+
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async saveMultipleSeeds(
+        category: string,
+        name: string,
+        seeds: MemorySeed[],
+        saveMemoryNumber: number,
+    ): Promise<boolean> {
+        const directory = await this.initializeAndGetDirectory();
+
+        const safeCategory = sanitizePathPart(category);
+        const safeName = sanitizeFilename(name);
+
+        if (saveMemoryNumber === null) {
+            return false;
         }
 
-        seeds.push(seed);
+        if (!safeCategory) {
+            return false;
+        }
 
-        await fs.writeFile(
-            filePath,
-            JSON.stringify(seeds, null, 2),
-            "utf-8",
-        );
+        if (!safeName) {
+            return false;
+        }
 
-        const memorySeedName =
-            `${safeCategory}/${safeName}.json`;
+        if (!seeds.length) {
+            return false;
+        }
 
-        const memorySeedsPool =
-            getMemorySeedsPool();
+        for (const seed of seeds) {
+            if (!seed.root_input.trim()) {
+                return false;
+            }
 
-        if (!memorySeedsPool.includes(memorySeedName)) {
-            setConfigSchematics({
-                memorySeedsPool: [
-                    ...memorySeedsPool,
-                    memorySeedName,
-                ],
+            if (!seed.direct_input.trim()) {
+                return false;
+            }
+
+            if (!seed.output.trim()) {
+                return false;
+            }
+        }
+        
+        try {
+            const categoryPath = path.join(
+                directory,
+                safeCategory,
+            );
+
+            await fs.mkdir(categoryPath, {
+                recursive: true,
             });
+
+            const filePath = path.join(
+                categoryPath,
+                `${safeName}.json`,
+            );
+
+            let existingSeeds: MemorySeed[] = [];
+
+            try {
+                const existing = await fs.readFile(
+                    filePath,
+                    "utf-8",
+                );
+
+                const parsed = JSON.parse(existing);
+
+                if (Array.isArray(parsed)) {
+                    existingSeeds = parsed;
+                } else if (parsed && typeof parsed === "object") {
+                    // Support the previous single-seed file format.
+                    existingSeeds = [parsed as MemorySeed];
+                } else {
+                    return false;
+                }
+            } catch (error: any) {
+                if (error.code !== "ENOENT") {
+                    return false;
+                }
+            }
+
+            existingSeeds.push(...seeds);
+
+            await fs.writeFile(
+                filePath,
+                JSON.stringify(existingSeeds, null, 2),
+                "utf-8",
+            );
+
+            const memorySeedName =
+                `${safeCategory}/${safeName}.json`;
+
+            const memorySeedsPool =
+                getMemorySeedsPool();
+
+            if (!memorySeedsPool.includes(memorySeedName)) {
+                setConfigSchematics({
+                    memorySeedsPool: [
+                        ...memorySeedsPool,
+                        memorySeedName,
+                    ],
+                });
+            }
+            
+            return true;
+        } catch {
+            return false;
         }
     }
 
