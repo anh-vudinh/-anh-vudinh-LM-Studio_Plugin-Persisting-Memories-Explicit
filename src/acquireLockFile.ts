@@ -108,16 +108,16 @@ export async function acquireLock(
         if (currentFunctions && currentFunctions.length > 0) {
             addLockFileFunction(lockFile, functionName);
 
-            console.log(
-                "===== PM ALREADY OWNS LOCK =====",
-                lockFile,
-                "function",
-                functionName,
-                "active functions",
-                getLockFileFunctions(lockFile),
-                "timestamp",
-                Date.now(),
-            );
+            // console.log(
+            //     "===== PM ALREADY OWNS LOCK =====",
+            //     lockFile,
+            //     "function",
+            //     functionName,
+            //     "active functions",
+            //     getLockFileFunctions(lockFile),
+            //     "timestamp",
+            //     Date.now(),
+            // );
 
             return;
         }
@@ -127,16 +127,16 @@ export async function acquireLock(
 
             addLockFileFunction(lockFile, functionName);
 
-            console.log(
-                "===== PM CREATED LOCK =====",
-                lockFile,
-                "function",
-                functionName,
-                "active functions",
-                getLockFileFunctions(lockFile),
-                "timestamp",
-                Date.now(),
-            );
+            // console.log(
+            //     "===== PM CREATED LOCK =====",
+            //     lockFile,
+            //     "function",
+            //     functionName,
+            //     "active functions",
+            //     getLockFileFunctions(lockFile),
+            //     "timestamp",
+            //     Date.now(),
+            // );
 
             await handle.close();
 
@@ -159,16 +159,16 @@ export async function acquireLock(
             ) {
                 addLockFileFunction(lockFile, functionName);
 
-                console.log(
-                    "===== PM ACQUIRED LOCK AFTER COLLISION =====",
-                    lockFile,
-                    "function",
-                    functionName,
-                    "active functions",
-                    getLockFileFunctions(lockFile),
-                    "timestamp",
-                    Date.now(),
-                );
+                // console.log(
+                //     "===== PM ACQUIRED LOCK AFTER COLLISION =====",
+                //     lockFile,
+                //     "function",
+                //     functionName,
+                //     "active functions",
+                //     getLockFileFunctions(lockFile),
+                //     "timestamp",
+                //     Date.now(),
+                // );
 
                 return;
             }
@@ -181,12 +181,12 @@ export async function acquireLock(
                     try {
                         await unlink(lockFile);
 
-                        console.log(
-                            "===== OTHER PLUGIN STALE LOCK REMOVED BY PM =====",
-                            lockFile,
-                            "timestamp",
-                            Date.now(),
-                        );
+                        // console.log(
+                        //     "===== OTHER PLUGIN STALE LOCK REMOVED BY PM =====",
+                        //     lockFile,
+                        //     "timestamp",
+                        //     Date.now(),
+                        // );
 
                     } catch (error) {
                         const fsError = error as NodeJS.ErrnoException;
@@ -226,15 +226,15 @@ export async function releaseLock(
     );
 
     if (!removed) {
-        console.warn(
-            "===== PM RELEASE LOCK WARNING =====",
-            lockFile,
-            "function",
-            functionName,
-            "was not registered as owning the lock",
-            "timestamp",
-            Date.now(),
-        );
+        // console.warn(
+        //     "===== PM RELEASE LOCK WARNING =====",
+        //     lockFile,
+        //     "function",
+        //     functionName,
+        //     "was not registered as owning the lock",
+        //     "timestamp",
+        //     Date.now(),
+        // );
 
         return;
     }
@@ -242,16 +242,16 @@ export async function releaseLock(
     const remainingFunctions =
         getLockFileFunctions(lockFile);
 
-    console.log(
-        "===== PM FUNCTION FINISHED =====",
-        lockFile,
-        "function",
-        functionName,
-        "remaining functions",
-        remainingFunctions,
-        "timestamp",
-        Date.now(),
-    );
+    // console.log(
+    //     "===== PM FUNCTION FINISHED =====",
+    //     lockFile,
+    //     "function",
+    //     functionName,
+    //     "remaining functions",
+    //     remainingFunctions,
+    //     "timestamp",
+    //     Date.now(),
+    // );
 
     // PM still has functions using this lock.
     if (remainingFunctions.length > 0) {
@@ -262,12 +262,12 @@ export async function releaseLock(
     try {
         await unlink(lockFile);
 
-        console.log(
-            "===== PM RELEASED LOCK =====",
-            lockFile,
-            "timestamp",
-            Date.now(),
-        );
+        // console.log(
+        //     "===== PM RELEASED LOCK =====",
+        //     lockFile,
+        //     "timestamp",
+        //     Date.now(),
+        // );
     } catch (error) {
         const fsError = error as NodeJS.ErrnoException;
 
