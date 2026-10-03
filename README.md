@@ -14,6 +14,10 @@ Persisting Memories Plugin Explicit is an LM Studio plugin that lets users prese
 
 Tested working on Windows 11 Pro 25H2 - LM Studio 0.4.24
 
+## Bug fix (10/3/2026)
+
+1) I thought I had accounted for the conversation file sitting within a nested folder, turns out I did not finish up the full implementation. My plugin could find the nested file but couldn't path to it afterwards if it were nested. It assumed the file was directly living in conversations root folder. The logic has now been finished up so you can organize your conversations into sub folders and the plugin should be able to still pin point it. 
+
 ## New/Updated (10/2/2026)
 
 1) Added batch memory save, `save memory <message #> to <message #>; category <category>; name <name>`.

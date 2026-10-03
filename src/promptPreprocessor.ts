@@ -4,7 +4,7 @@ import { acquireLock, releaseLock } from "./acquireLockFile";
 import { isEligibleAssistantMessage } from "./conversationReader";
 import { memoryStore } from "./memoryStore";
 import { removeMemorySeeds } from "./removeMemorySeeds";
-import { join, basename } from "node:path";
+import { join, basename, relative } from "node:path";
 import { processMessage } from "./triggerSaveMemory"
 import { multiEditCoordinator } from "./multiEditCoordinator";
 import path from "node:path";
@@ -618,8 +618,15 @@ async function recoverICIDMultiStepMaybeSetConversationFileName(
             ) {
                 // If we already expendend the processing power to confirm the conversation file name
                 // we might as well set it.
-                setConversationFileName(normalizeJsonFileName(basename(conversationFile)));
-
+                setConversationFileName(
+                    normalizeJsonFileName(
+                        getConversationRelativePath(
+                            conversationDirectory,
+                            conversationFile,
+                        ),
+                    ),
+                );
+                
                 // Check relationship file for a matching internal chat ID
                 try {
                     const relationshipJson = await readFile(
@@ -710,7 +717,7 @@ async function promptProcessorTryWorkingDirectoryBaseNameLookupInRelationshipFil
             }
         }
     } catch (error) {
-        console.error("Error reading relationship file:", error);
+        console.error("promptProcessorTryWorkingDirectoryBaseNameLookupInRelationshipFile error:", error);
     }
 }
 
@@ -756,7 +763,7 @@ async function promptProcessorMatchICIDInRelationshipFile(
         }
 
     } catch (error: any) {
-        console.error(`Error occurred while reading relationship file: ${error.message}`);
+        console.error(`promptProcessorMatchICIDInRelationshipFile error: ${error.message}`);
     }
 }
 
@@ -874,7 +881,14 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
         // Check for the embedded ICID
         if (internalChatIDPattern.test(conversationJson)) {
 
-            setConversationFileName(normalizeJsonFileName(basename(conversationFile)));
+            setConversationFileName(
+                normalizeJsonFileName(
+                    getConversationRelativePath(
+                        conversationDirectory,
+                        conversationFile,
+                    ),
+                ),
+            );
 
             break;
         }
@@ -896,7 +910,14 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
                 clientInput.length > 0 &&
                 input.startsWith(clientInput)
             ) {
-                setConversationFileName(normalizeJsonFileName(basename(conversationFile)));
+                setConversationFileName(
+                    normalizeJsonFileName(
+                        getConversationRelativePath(
+                            conversationDirectory,
+                            conversationFile,
+                        ),
+                    ),
+                );
 
                 break;
             }
@@ -999,7 +1020,7 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
         }
 
     } catch (error: any) {
-        console.error(`scanForConversationFileThruFullConversationDirectoryScan() error: ${error.message}`);
+        console.error(`scanForConversationFileThruFullConversationDirectoryScan error: ${error.message}`);
     } finally {
         await releaseLock(lockFile, functionName);
     }
@@ -1450,4 +1471,14 @@ export function promptProcessorConstructMessageNumberTag(
             markerBlock,
         );
     }
+}
+
+function getConversationRelativePath(
+    conversationsDirectory: string,
+    conversationFilePath: string,
+): string {
+    return relative(
+        conversationsDirectory,
+        conversationFilePath,
+    ).split(path.sep).join("/");
 }
