@@ -235,6 +235,16 @@ const NAME_EXTRACT_REGEX =
 const EXIT_SAVE_MEMORY_REGEX =
     /\bexit\b\s+(?:save|sav|sve|sv|store|remember|persist)\b\s+(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i;
 
+const TABLE_OF_MEMORIES_REGEX =
+    /\b(?:table|tbl|tble|tabel)\s*(?:of\s*)?(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)|(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s*(?:table|tbl|tble|tabel)|\btom[_\s-]*(?:[a-j]\s*-?\s*[a-j]|[k-q]\s*-?\s*[k-q]|[r-z]\s*-?\s*[r-z])\b/i;
+// Second check to extract the alphabet range of tom file
+const MEMORY_RANGE_REGEX =
+    /\b(?:tom\s*[_-]?\s*|(?:table|tbl|tble|tabel)\s*(?:of\s*)?(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s*|(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s+(?:table|tbl|tble|tabel)\s*)([a-z]\s*-?\s*[a-z])\b/i;
+
+// Both lookup and memory keywords must be present, they must be < 5 words apart
+const FUZZY_SEARCH_MEMORY_REGEX =
+    /\b(?:(?:search|serch|srch|searching|find|fnd|look|lok|looking|fetch|fetsh|retrieve|retrive|retreive|recall|locate|lcoate|remember|rember|recollect|recollecting)\b(?:\W+\w+){0,5}\W+\b(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)\b|(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)\b(?:\W+\w+){0,5}\W+\b(?:search|serch|srch|searching|find|fnd|look|lok|looking|fetch|fetsh|retrieve|retrive|retreive|recall|locate|lcoate|remember|rember|recollect|recollecting)\b)/i;
+
 export function getSaveMemoryRegex(): RegExp {
     return SAVE_MEMORY_REGEX;
 }
@@ -257,4 +267,37 @@ export function getExitSaveMemoryRegex(): RegExp {
 
 export function getCleanUserInputSaveMemoryRegex(): RegExp {
     return CLEAN_USER_INPUT_SAVE_MEMORY_REGEX;
+}
+
+export function getTableOfMemoriesRegex(): RegExp {
+    return TABLE_OF_MEMORIES_REGEX;
+}
+
+export function getMemoryRangeRegex(): RegExp {
+    return MEMORY_RANGE_REGEX;
+}
+
+export function getFuzzySearchRegex(): RegExp {
+    return FUZZY_SEARCH_MEMORY_REGEX;
+}
+
+// ============================================================
+// TOM Command States
+// ============================================================
+// Status:
+// Incomplete = pending TOM command not yet done
+// Null = no TOM command default state
+// Ready = valid and queued
+export type PendingTomCommandStatus = "incomplete" | "null" | "ready";
+
+let pendingTomCommand: PendingTomCommandStatus = "null";
+
+export function getPendingTomCommand(): PendingTomCommandStatus {
+    return pendingTomCommand;
+}
+
+export function setPendingTomCommand(
+    value: PendingTomCommandStatus,
+): void {
+    pendingTomCommand = value;
 }

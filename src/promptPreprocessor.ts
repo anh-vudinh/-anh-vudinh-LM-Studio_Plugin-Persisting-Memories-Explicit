@@ -7,7 +7,7 @@ import { removeMemorySeeds } from "./removeMemorySeeds";
 import { join, basename, relative } from "node:path";
 import { processMessage } from "./triggerSaveMemory"
 import { multiEditCoordinator } from "./multiEditCoordinator";
-import { tableOfMemoriesMain } from "./tableOfMemories"
+import { processMessageForTom, tableOfMemoriesMain } from "./tableOfMemories"
 import path from "node:path";
 import os from "os";
 
@@ -24,6 +24,7 @@ import {
     setInternalChatID,
     getConversationFileName,
     setConversationFileName,
+    getPendingTomCommand,
 } from "./config";
 
 import { 
@@ -178,6 +179,9 @@ export async function promptPreprocessor(
     await processMessage(userText);
 
     const pendingSaveMemoryState = getPendingSaveMemory();
+
+    // Test userText for tableofMemoryCommands
+    await processMessageForTom(userText);
     
     // Model appends message # at the end of the it's response
     // prerequisite to instructing to save memory
@@ -315,7 +319,11 @@ export async function promptPreprocessor(
 
     await multiEditCoordinator(false);
 
+    // This function just has to do with the Initialize Table of Memories toggle in the Control Panel
+    // If you're looking for the text append logic it's controlled by processMessageForTom()
     await tableOfMemoriesMain();
+
+    const pendingTomCommandState = getPendingTomCommand();
 
     // MESSAGE WITH MEMORIES
     if (injectedContext) {
@@ -324,7 +332,8 @@ export async function promptPreprocessor(
         return (
             `${userText}.                          ` +
             `${injectedContext}[END OF MEMORIES] ` +
-            `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is trying to save a memory, ignore what is between the [BEGINNING OF MEMORIES] and [END OF MEMORIES TAG], give a short reply 'pending save memory...'." :""}` +
+            `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is using a save memory function, ignore what is between the [BEGINNING OF MEMORIES] and [END OF MEMORIES TAG], DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'pending save memory...'." :""}` +
+            `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'searching through Table of Memories'" : "" }` +
             `${createNewInternalChatID? `[ICID: ${getInternalChatID()}] Ignore this ICID tag. ` : ""}`
         )
     }
@@ -334,7 +343,8 @@ export async function promptPreprocessor(
     // pretending to play along and fake a save.
     return (
         `${userText}.                          ` +
-        `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is trying to save a memory, give a short reply 'pending save memory...'." :""}` +
+        `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is using a save memory function, DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'pending save memory...'." :""}` +
+        `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'searching through Table of Memories...'" : "" }` +
         `${createNewInternalChatID? `[ICID: ${getInternalChatID()}] Ignore this ICID tag. ` : ""}`
     );
 }

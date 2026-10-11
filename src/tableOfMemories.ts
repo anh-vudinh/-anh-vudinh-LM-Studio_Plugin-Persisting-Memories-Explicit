@@ -2,9 +2,21 @@ import { acquireLock, releaseLock } from "./acquireLockFile";
 import { memoryStore } from "./memoryStore";
 import type { MemorySeed } from "./memoryStore";
 import { join } from "node:path";
-import { getController, configSchematics } from "./config";
+
+import { editAssistantResponse } from "./triggerSaveMemory";
 import path from "node:path";
 import fs from "node:fs/promises";
+
+import { 
+    getController, 
+    configSchematics, 
+    getTableOfMemoriesRegex, 
+    getFuzzySearchRegex, 
+    getMemoryRangeRegex, 
+    addConversationOperation, 
+    setPendingTomCommand, 
+    getPendingTomCommand
+} from "./config";
 
 import {
     writeFile,
@@ -12,6 +24,7 @@ import {
     readdir,
     stat,
 } from "node:fs/promises";
+
 
 interface TableOfMemoriesEntity {
     fileSizeKB: number;
@@ -23,6 +36,11 @@ interface TableOfMemoriesEntity {
 interface MemoryTurn {
     direct_input: string;
     output: string;
+}
+
+interface MemoryEntry {
+  filename: string;
+  summary: string;
 }
 
 export async function tableOfMemoriesMain(): Promise<void> {
@@ -38,13 +56,18 @@ export async function tableOfMemoriesMain(): Promise<void> {
     }
 }
 
+//-------------------------------------------------
+// TABLE OF MEMORIES FILE MAINTANENCE
+//-------------------------------------------------
+
+// Creates the three TOM files
 async function createTableOfMemories(
     memoriesDirectory: string,
 ): Promise<void> {
     const tableNames = [
-        "TOM_A-I.json",
-        "TOM_J-R.json",
-        "TOM_S-Z.json", // Special characters will live in S-Z.
+        "TOM_A-J.json",
+        "TOM_K-Q.json",
+        "TOM_R-Z.json", // Special characters will live in R-Z.
     ];
 
     for (const tableName of tableNames) {
@@ -74,6 +97,8 @@ async function createTableOfMemories(
     }
 }
 
+// Will populate the TOM files with all exisiting memories
+// Should not be run often or automatically, expensive
 async function initializeTableOfMemoriesFromLegacyPluginVersion(
     memoriesDirectory: string,
 ): Promise<void> {
@@ -115,11 +140,11 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
             const firstCharacter = category.name[0].toUpperCase();
 
             const tomFileName =
-                firstCharacter >= "A" && firstCharacter <= "I"
-                    ? "TOM_A-I.json"
-                    : firstCharacter >= "J" && firstCharacter <= "R"
-                        ? "TOM_J-R.json"
-                        : "TOM_S-Z.json";
+                firstCharacter >= "A" && firstCharacter <= "J"
+                    ? "TOM_A-J.json"
+                    : firstCharacter >= "K" && firstCharacter <= "Q"
+                        ? "TOM_K-Q.json"
+                        : "TOM_R-Z.json";
 
             const tomFilePath = path.join(
                 memoriesDirectory,
@@ -183,7 +208,7 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                             await reconstructMemoryFragments(memoryFilePath);
 
                         const summaryReturnPackage =
-                            await modelCallToCraftMemorySummary(memoryFragments);
+                            await modelCallToCraftMemorySummaryAndKeywords(memoryFragments);
 
                         const { summary, keywords } =
                             extractSummaryAndKeywords(summaryReturnPackage);
@@ -220,7 +245,8 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
     }
 }
 
-async function modelCallToCraftMemorySummary(
+// Use model to craft the summary and keywords for the TOM files
+async function modelCallToCraftMemorySummaryAndKeywords(
     memoryFragments: string,
 ): Promise<string> {
     const client = getController().client;
@@ -259,21 +285,8 @@ async function modelCallToCraftMemorySummary(
     return cleanedText;
 }
 
-async function reconstructMemoryFragments(
-    memoryFilePath: string,
-): Promise<string> {
-    const content = await readFile(memoryFilePath, "utf-8");
-    const turns: MemoryTurn[] = JSON.parse(content);
-
-    return turns
-        .map(
-            (turn, index) =>
-                `[Turn ${index + 1}] User: ${turn.direct_input}\n` +
-                `Assistant: ${turn.output}`,
-        )
-        .join("\n\n");
-}
-
+// Use model to extract Summary and Keywords returned by the model
+// in a single string into separate fields based on the seperation tags we asked the model to append
 function extractSummaryAndKeywords(
     response: string,
 ): { summary: string; keywords: string } {
@@ -352,6 +365,27 @@ function extractSummaryAndKeywords(
     return result;
 }
 
+// Helper to reconstruct the memory file's contents into a coherent User/Assistant Turn
+// for the model to digest to craft a summary and choose keywords.
+async function reconstructMemoryFragments(
+    memoryFilePath: string,
+): Promise<string> {
+    const content = await readFile(memoryFilePath, "utf-8");
+    const turns: MemoryTurn[] = JSON.parse(content);
+
+    return turns
+        .map(
+            (turn, index) =>
+                `[Turn ${index + 1}] User: ${turn.direct_input}\n` +
+                `Assistant: ${turn.output}`,
+        )
+        .join("\n\n");
+}
+
+// Updates the TOM file with new entries, triggered by saveMemorySeed
+// This is expected to add new memories to the appropriate TOM file,
+// update summary and keywords of exisiting TOM files by taking the exisiting summary and keywords
+// and merging them with the new content to that memory summarized
 export async function updateTableOfMemoriesIncrementally(
     memoriesDirectory: string,
     category: string,
@@ -374,11 +408,11 @@ export async function updateTableOfMemoriesIncrementally(
         const firstCharacter = category[0].toUpperCase();
 
         const tomFileName =
-            firstCharacter >= "A" && firstCharacter <= "I"
-                ? "TOM_A-I.json"
-                : firstCharacter >= "J" && firstCharacter <= "R"
-                    ? "TOM_J-R.json"
-                    : "TOM_S-Z.json";
+            firstCharacter >= "A" && firstCharacter <= "J"
+                ? "TOM_A-J.json"
+                : firstCharacter >= "K" && firstCharacter <= "Q"
+                    ? "TOM_K-Q.json"
+                    : "TOM_R-Z.json";
 
         const tomFilePath = path.join(
             memoriesDirectory,
@@ -424,7 +458,7 @@ export async function updateTableOfMemoriesIncrementally(
             newMemoryFragments,
         ].join("\n");
 
-        const summaryReturnPackage = await modelCallToUpdateMemorySummary(consolidationInput);
+        const summaryReturnPackage = await modelCallToUpdateMemorySummaryAndKeywords(consolidationInput);
 
         const { summary, keywords } = extractSummaryAndKeywords(summaryReturnPackage);
 
@@ -457,7 +491,9 @@ export async function updateTableOfMemoriesIncrementally(
     }
 }
 
-async function modelCallToUpdateMemorySummary(
+// The prompt that asks the model to merge new user/assistant turns added to the memory file
+// into the contents of the exisiting TOM keywords and summary
+async function modelCallToUpdateMemorySummaryAndKeywords(
     consolidationInput: string,
 ): Promise<string> {
     
@@ -499,6 +535,8 @@ async function modelCallToUpdateMemorySummary(
     return cleanedText;
 }
 
+// This is triggered during the deletion memory logic
+// Deletes any existing TOM entry that matches the deleted memory
 export async function deleteMemoryFromTableOfMemories(
     memoriesDirectory: string,
     category: string,
@@ -507,11 +545,11 @@ export async function deleteMemoryFromTableOfMemories(
     const firstCharacter = category[0].toUpperCase();
 
     const tomFileName =
-        firstCharacter >= "A" && firstCharacter <= "I"
-            ? "TOM_A-I.json"
-            : firstCharacter >= "J" && firstCharacter <= "R"
-                ? "TOM_J-R.json"
-                : "TOM_S-Z.json";
+        firstCharacter >= "A" && firstCharacter <= "J"
+            ? "TOM_A-J.json"
+            : firstCharacter >= "K" && firstCharacter <= "Q"
+                ? "TOM_K-Q.json"
+                : "TOM_R-Z.json";
 
     const tomFilePath = join(memoriesDirectory, tomFileName);
     const fileName = `${category}/${filename}`;
@@ -535,15 +573,24 @@ export async function deleteMemoryFromTableOfMemories(
     return tomFileName;
 }
 
+//-------------------------------------------------
+// FUZZY MEMORY RECALL
+//-------------------------------------------------
+
+// Gathers all the filenames and their keywords from all the TOMs
+// To feed to the model to first identify which filenames have the most
+// similar keywords matching the user's query.
+// Note that the user's query is actually the model's "understanding" of the user's query
+// not the user's direct userText.
 export async function tableOfMemoriesSummariesLookup(
     query: string,
 ): Promise<string> {
     const memoriesDirectory = await memoryStore.getMemoriesDirectory();
 
     const tomFileNames = [
-        "TOM_A-I.json",
-        "TOM_J-R.json",
-        "TOM_S-Z.json",
+        "TOM_A-J.json",
+        "TOM_K-Q.json",
+        "TOM_R-Z.json",
     ];
 
     // Load all TOM entries into memory.
@@ -682,6 +729,9 @@ export async function tableOfMemoriesSummariesLookup(
     );
 }
 
+// Prompt to ask the model to choose the best matching keywords and return the file names only in a string array.
+// Must be a string array because i've seen a model return strings only they do not follow strict and reliable
+// formatting. Allowing them to return a string means they may feel like adding **filename** or return their conclusions
 async function modelCallToSelectMemoryFilenamesByKeywords(
     query: string,
     keywordIndex: string,
@@ -724,6 +774,9 @@ async function modelCallToSelectMemoryFilenamesByKeywords(
     return cleanedText;
 }
 
+// Prompt to ask the model to choose the best matching summaries after we've filtered by a keywords similarity match
+// Must be a string array because i've seen a model return strings only they do not follow strict and reliable
+// formatting. Allowing them to return a string means they may feel like adding **filename** or return their conclusions
 async function modelCallToSelectMemoryFilenamesBySummaries(
     query: string,
     candidateSummaries: string,
@@ -766,6 +819,7 @@ async function modelCallToSelectMemoryFilenamesBySummaries(
     return cleanedText;
 }
 
+// Parse the string of a string array of filenames given by the model to an actual usable strings array.
 function parseReturnedFilenames(response: string): string[] {
     const trimmedResponse = response.trim();
 
@@ -798,16 +852,19 @@ function parseReturnedFilenames(response: string): string[] {
         .filter((line) => line.length > 0);
 }
 
+//-------------------------------------------------
+// TABLE OF MEMORIES LOOKUP
+//-------------------------------------------------
+
 export async function tableOfMemoriesDirectLookup(
     tomName: string,
 ): Promise<string> {
-    const memoriesDirectory =
-        await memoryStore.getMemoriesDirectory();
+    const memoriesDirectory = await memoryStore.getMemoriesDirectory();
 
     const validTomFiles = [
-        "TOM_A-I",
-        "TOM_J-R",
-        "TOM_S-Z",
+        "TOM_A-J",
+        "TOM_K-Q",
+        "TOM_R-Z",
     ];
 
     const normalizedTomName = tomName
@@ -835,4 +892,253 @@ export async function tableOfMemoriesDirectLookup(
 
         throw error;
     }
+}
+
+//-------------------------------------------------
+// UserText Interceptor To Determine TOM Regex Commands
+//-------------------------------------------------
+
+// First layer filter that will try to determine if the userText
+// is a TOM fuzzy search or TOM table lookup command.
+export async function processMessageForTom(
+    userText: string,
+): Promise<void>{
+
+    const TABLE_OF_MEMORIES_REGEX = getTableOfMemoriesRegex();
+
+    const FUZZY_SEARCH_MEMORY_REGEX = getFuzzySearchRegex();
+
+    const tomMatch = userText.match(TABLE_OF_MEMORIES_REGEX);
+
+    const pendingTomCommand = getPendingTomCommand();
+
+    // First layer check for direct table of memories lookup.
+    // This captures a broad userText with keywords for 'fetch' & 'table' & 'memory|memories' || 'tom'
+    if (
+        tomMatch ||
+        pendingTomCommand === "incomplete"
+    ) {
+
+        const match = extractMemoryRange(userText);
+
+        // Second layer check to see if those three same values exist AND there is variation of `TOM_A-J`, `TOM_K-Q`, `TOM_R-Z`
+        // which is the expected table names ai, a i, a_i validate too as long as they've cleared the first layer check
+        if (match) {
+
+            const tableName = `TOM_${match.toUpperCase()}`;
+
+            const returnPackage = await tableOfMemoriesDirectLookup(tableName);
+            
+            const constructedTableString = formatAsTableString(returnPackage);
+            
+            // Inject the constructedTableString into the newest assistant message.
+            console.log("=================constructedTbalstring", constructedTableString)
+            addConversationOperation(
+                "tryAppendTableOfMemoriesContentTimeoutFunction",
+                {
+                    constructedTableString,
+                },
+            );
+
+            setPendingTomCommand("ready");
+        }
+
+        if (!match) {
+            // Build a string to append to ask the user which table they like to look up
+            // giving them their full options.
+            // Set ourselves in a global state to wait for that answer.
+
+            const constructedTableString = 'Specify exactly which Table of Memories you wish to retrieve: `TOM_A-J`, `TOM_K-Q`, `TOM_R-Z`';
+
+            addConversationOperation(
+                "tryAppendTableOfMemoriesContentTimeoutFunction",
+                {
+                    constructedTableString,
+                },
+            );
+
+            setPendingTomCommand("incomplete");
+        }
+    }
+
+    // Fuzzy Search Regex matched first layer check, send it through to 
+    // the model to validate and extract the search query.
+    const fuzzySearchMatch = userText.match(FUZZY_SEARCH_MEMORY_REGEX);
+
+    if (fuzzySearchMatch) {
+        
+        const extractedQuery = await askModelToValidateFuzzySearchRegexAndExtractQuery(userText);
+        
+        if (extractedQuery === "") return;
+
+        const returnPackage = await tableOfMemoriesSummariesLookup(extractedQuery);
+
+        if (returnPackage === "") return;
+
+        const constructedTableString = constructTOMSummariesLookupTable(returnPackage);
+        
+        // Inject the constructedTableString into the newest assistant message.
+        addConversationOperation(
+            "tryAppendTableOfMemoriesContentTimeoutFunction",
+            {
+                constructedTableString,
+            },
+        );
+
+        setPendingTomCommand("ready");
+    }
+}
+
+// Second filter to validate a search command and extract 
+// the search query which will be fed to compare to keywords and summaries
+// Low cost hybrid approach rather than try and predict every formatting a user may 
+// weave their actual query in during a save command.
+async function askModelToValidateFuzzySearchRegexAndExtractQuery(
+    userText: string,
+):Promise<string> {
+    const client = getController().client;
+    const model = await client.llm.model();
+    
+    const prompt = `
+        The user has provided a text which may be a request or command to recall, find, or any synonym of 'search' for a MEMORY OR MEMORIES. 
+
+        Extract the subject or phrase of what they are trying to search for. Do not include the search command within your returned string of the search query you have extracted.
+
+        If this was not a valid search query return an empty string.
+
+        [BEGINNING OF USER TEXT]: 
+        ${userText}
+        [END OF USER TEXT]
+        `.trim();
+
+    const result = await model.respond(
+        prompt,
+        {
+            temperature: 0,
+        },
+    );
+
+    const cleanedText = result.content
+        .replace(
+            /^[\s\S]*?__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[A-Za-z0-9]+__/i,
+            "",
+        )
+        .replace(/^[\s\S]*?```(?:json)?\s*/i, "")
+        .replace(/\s*```[\s\S]*$/i, "")
+        .trim();
+    console.log(cleanedText)
+    return cleanedText;
+}
+
+// Extracts the TOM suffix identifier for TOM file of interest
+function extractMemoryRange(input: string): string | null {
+    
+    const MEMORY_RANGE_REGEX = getMemoryRangeRegex();
+    
+    const match = input.match(MEMORY_RANGE_REGEX);
+    if (!match) return null;
+
+    const letters = match[1].replace(/[\s-]/g, "").toLowerCase();
+
+    if (!/^[a-z]{2}$/.test(letters)) return null;
+
+    const [start, end] = letters;
+
+    if (/[a-j]/.test(start) && /[a-j]/.test(end)) return "a-j";
+    if (/[k-q]/.test(start) && /[k-q]/.test(end)) return "k-q";
+    if (/[r-z]/.test(start) && /[r-z]/.test(end)) return "r-z";
+
+    return null;
+}
+
+//-------------------------------------------------
+// String Constructors to replace Assistant's last Text with Prepared Content
+//-------------------------------------------------
+function constructTOMSummariesLookupTable(
+    returnPackage: string,
+): string {
+    const MEMORY_ENTRY_REGEX =
+        /Filename:\s*(.*?)\s*Summary:\s*([\s\S]*?)(?=Filename:|$)/g;
+
+    const entries: MemoryEntry[] = Array.from(
+        returnPackage.matchAll(MEMORY_ENTRY_REGEX),
+        ([, filename, summary]) => ({
+        filename: filename.trim(),
+        summary: summary.trim(),
+        })
+    );
+
+    if (entries.length === 0) return "";
+
+    const escape = (value: string) =>
+        value
+        .replace(/\|/g, "\\|")
+        .replace(/\r?\n/g, "<br>");
+
+    return [
+        "| Filename | Summary |",
+        "| --- | --- |",
+        ...entries.map(
+        ({ filename, summary }) =>
+            `| ${escape(filename)} | ${escape(summary)} |`
+        ),
+    ].join("\n");
+}
+
+export function formatAsTableString(input: string): string {
+    if (!input.trim()) return "";
+
+    const data = JSON.parse(input);
+
+    if (!Array.isArray(data)) return "";
+
+    const escapeCell = (value: unknown): string =>
+        String(value ?? "")
+            .replace(/\|/g, "\\|")
+            .replace(/\r?\n/g, " ");
+
+    const headers = [
+        "fileName",
+        "fileSize (KB)",
+        "Keywords",
+        "Summary",
+    ];
+
+    return [
+        `| ${headers.join(" | ")} |`,
+        `| ${headers.map(() => "---").join(" | ")} |`,
+        ...data.map((file: {
+            fileName: string;
+            fileSizeKB: number;
+            keywords: string;
+            summary: string;
+        }) =>
+            `| ${[
+                file.fileName,
+                Number(file.fileSizeKB).toFixed(2),
+                file.keywords,
+                file.summary,
+            ].map(escapeCell).join(" | ")} |`
+        ),
+    ].join("\n");
+}
+
+//-------------------------------------------------
+// Function for multiEditCoordinator
+//-------------------------------------------------
+export async function tryAppendTableOfMemoriesContentTimeoutFunction(
+    latestConversation: any,
+    constructedTableString: string,
+): Promise<void> {
+
+    let lines: string[] = [];
+
+    lines.push(
+        `${constructedTableString}`
+    );
+
+    await editAssistantResponse(
+        latestConversation,
+        lines.join("\n\n"),
+    );
 }

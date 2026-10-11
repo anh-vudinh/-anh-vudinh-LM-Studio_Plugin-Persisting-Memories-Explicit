@@ -4,6 +4,7 @@ import { tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction } from ".
 import { tryRemoveMemorySeedsTimeoutFunction } from "./removeMemorySeeds";
 import { acquireLock, releaseLock } from "./acquireLockFile";
 import { promptProcessorConstructMessageNumberTag } from "./promptPreprocessor";
+import { tryAppendTableOfMemoriesContentTimeoutFunction } from "./tableOfMemories";
 
 import { 
     readFile, 
@@ -19,7 +20,8 @@ import {
     setPreviousTurnSavingState,
     resetPendingSaveMemory,
     getPendingSaveMemory, 
-    getConversationFileName 
+    getConversationFileName, 
+    setPendingTomCommand
 } from "./config";
 
 export async function multiEditCoordinator(
@@ -103,6 +105,8 @@ export async function multiEditCoordinator(
 
                             const latestConversation = JSON.parse(latestJson);
 
+                            let protectSaveMemoryTurn = false;
+
                             for (const operation of conversationOperations) {
 
                                 // ============================================================
@@ -114,6 +118,21 @@ export async function multiEditCoordinator(
                                         operation.params.exitRequested,
                                         latestConversation,
                                         operation.params.pendingSaveMemory
+                                    );
+
+                                    protectSaveMemoryTurn = true;
+                                }
+
+                                // ============================================================
+                                // Table of Memories Lookup Path
+                                // ============================================================
+                                if (
+                                    operation.name === "tryAppendTableOfMemoriesContentTimeoutFunction" &&
+                                    protectSaveMemoryTurn === false
+                                ) {
+                                    await tryAppendTableOfMemoriesContentTimeoutFunction(
+                                        latestConversation,
+                                        operation.params.constructedTableString
                                     );
                                 }
 
@@ -177,6 +196,9 @@ export async function multiEditCoordinator(
                                 for (const operation of conversationOperations) {
                                     if (operation.name === "tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction") {
                                         setPreviousTurnSavingState(true);
+                                    }
+                                    if (operation.name === "tryAppendTableOfMemoriesContentTimeoutFunction") {
+                                        setPendingTomCommand("null");
                                     }
                                 }
                             }
