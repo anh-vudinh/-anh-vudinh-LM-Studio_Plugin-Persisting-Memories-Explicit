@@ -16,6 +16,8 @@ Tested working on Windows 11 Pro 25H2 - LM Studio 0.4.24
 
 ## New/Updated (10/10/2026)
 
+***I was too busy trying to code this and double check it's functionality between both model dependent and explicit versions that I forgot this version is EXPLICIT! It should mean no reliance on tool calls to function. So to stay true to that I will work on a later update where these functions will be handled by the backend rather than allowing the tool to act as the middle man. Just take this revision/release as a demo of the new features.***
+
 1) The user controls the memory seeds they save, which is sorted by the user's choice too. The table of memories, when first initialized, will send every memory file through the model to extract keywords and provide a summary that best defines the contents of that memory file. Those values will then be added to one of three table of memories files living in the `~\.lmstudio\memories` folder.
    <details>
    <summary>Click to expand image of tom file</summary>
