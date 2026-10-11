@@ -7,6 +7,7 @@ import { removeMemorySeeds } from "./removeMemorySeeds";
 import { join, basename, relative } from "node:path";
 import { processMessage } from "./triggerSaveMemory"
 import { multiEditCoordinator } from "./multiEditCoordinator";
+import { tableOfMemoriesMain } from "./tableOfMemories"
 import path from "node:path";
 import os from "os";
 
@@ -15,6 +16,7 @@ import {
     getPreviousTurnSavingState,
     getPendingSaveMemory,
     setController,
+    getController,
     configSchematics,
     setConfigSchematics,
     setPreviousTurnSavingState,
@@ -67,6 +69,7 @@ export async function promptPreprocessor(
     const userText = userMessage.getText();
     let createNewInternalChatID = false;
     setController(ctl);
+    const summarizeMemorySeeds = config.get("summarizeMemorySeeds") as boolean;
 
     //------------------------------------
     // Maybe repair a missing relationship bond with in memory data
@@ -274,7 +277,7 @@ export async function promptPreprocessor(
     // New valid seeds waiting to be injected
     if (newMemorySeeds.length > 0) {
 
-        injectedContext = await promptProcessorConstructMemoriesToInject(newMemorySeeds, memoriesDirectory);
+        injectedContext = await promptProcessorConstructMemoriesToInject(newMemorySeeds, memoriesDirectory, summarizeMemorySeeds);
     }
 
     // Remove all memory seeds
@@ -311,6 +314,8 @@ export async function promptPreprocessor(
     }
 
     await multiEditCoordinator(false);
+
+    await tableOfMemoriesMain();
 
     // MESSAGE WITH MEMORIES
     if (injectedContext) {
@@ -1187,6 +1192,7 @@ async function promptProcessorConversationFileScanForPreviousSeeds(
 async function promptProcessorConstructMemoriesToInject(
     newMemorySeeds: string[],
     memoriesDirectory: string,
+    summarizeMemorySeeds: boolean,
 ): Promise<string>{
 
     let createdInjectedContext = "";
@@ -1253,6 +1259,8 @@ async function promptProcessorConstructMemoriesToInject(
 
         createdInjectedContext +=
             `DATE: Between ${earliestDate} - ${latestDate}\n\n`;
+        
+        const memoryBlockContentStart = createdInjectedContext.length;
 
         // We group similar Q & A under the same topic
         // as to not waste tokens appending a topic to each exchange
@@ -1308,6 +1316,20 @@ async function promptProcessorConstructMemoriesToInject(
             topicNumber += 1;
         }
 
+        // Reconstructs the contents to a summary instead.
+        if (summarizeMemorySeeds) {
+            const memoryBlockContent = createdInjectedContext.slice(
+                memoryBlockContentStart,
+            );
+
+            const summarizedContent = await modelCallToSummarizeMemorySeed(memoryBlockContent);
+
+            createdInjectedContext =
+                createdInjectedContext.slice(0, memoryBlockContentStart) +
+                summarizedContent +
+                "\n\n";
+        }
+
         // Indicates the end of the memory block
         createdInjectedContext +=
             `[END ${memorySeed}]\n\n`;
@@ -1326,6 +1348,41 @@ async function promptProcessorConstructMemoriesToInject(
     setConfigSchematics({memorySeedsSelected: getMemorySeedsSelected()});
 
     return createdInjectedContext;
+}
+
+async function modelCallToSummarizeMemorySeed(
+    memoryBlockContent: string,
+): Promise<string> {
+    const client = getController().client;
+    const model = await client.llm.model();
+    
+    const prompt = `
+        The user needs you the assistant to rigorously condense the following MESSAGE HISTORY exchange between a user and assistant.
+
+        Discard anything that seems repetitive, minor, or of little value. Do not lose any important details of the exchange. Return a string.
+
+        [BEGINNING OF MESSAGE HISTORY]: 
+        ${memoryBlockContent}
+        [END OF MESSAGE HISTORY]
+        `.trim();
+
+    const result = await model.respond(
+        prompt,
+        {
+            temperature: 0,
+        },
+    );
+
+    const cleanedText = result.content
+        .replace(
+            /^[\s\S]*?__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[A-Za-z0-9]+__/i,
+            "",
+        )
+        .replace(/^[\s\S]*?```(?:json)?\s*/i, "")
+        .replace(/\s*```[\s\S]*$/i, "")
+        .trim();
+
+    return cleanedText;
 }
 
 /**

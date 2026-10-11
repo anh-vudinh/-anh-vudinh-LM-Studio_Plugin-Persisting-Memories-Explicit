@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { setConfigSchematics } from "./config";
+import { updateTableOfMemoriesIncrementally } from "./tableOfMemories";
 
 export interface MemorySeed {
     date: string;
@@ -213,6 +214,13 @@ export class MemoryStore {
             const memorySeedName =
                 `${safeCategory}/${safeName}.json`;
 
+            await updateTableOfMemoriesIncrementally(
+                directory,
+                safeCategory,
+                safeName,
+                [seed],
+            );
+
             const memorySeedsPool =
                 getMemorySeedsPool();
 
@@ -321,6 +329,14 @@ export class MemoryStore {
 
             const memorySeedName =
                 `${safeCategory}/${safeName}.json`;
+
+            // updating the TOM
+            await updateTableOfMemoriesIncrementally(
+                directory,
+                safeCategory,
+                safeName,
+                seeds,
+            );
 
             const memorySeedsPool =
                 getMemorySeedsPool();

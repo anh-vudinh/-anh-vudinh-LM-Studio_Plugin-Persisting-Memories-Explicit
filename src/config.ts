@@ -44,6 +44,27 @@ export function createConfig(
             },
             [...memorySeedsSelected]
         )
+        .field(
+            "summarizeMemorySeeds",
+            "boolean",
+            {
+                displayName: "Summarize All Memories Injected (not retroactive)",
+                subtitle: " Will force a summary of the memory file to be injected instead of the complete user/assistant exchange",
+                hint: "This will lessen the context window consumed but may lose details or merge content compared to the full message exchange.",
+            },
+            false,
+        )
+        .field(
+            "initializeTOM",
+            "boolean",
+            {
+                displayName: "Initialize Table of Memories",
+                subtitle: " *WARNING* Do not leave enabled. Hover for details.",
+                warning: "Remember to off this after you've sent one message with it enabled.",
+                hint: "This is to create the table of memories files for earlier versions of this plugin. You're only required to run this enabled once along with a sent user message, or if you suspect that your TOM files/contents need repair, afterwards leave it off. It is expensive to run if you have many memories.",
+            },
+            false,
+        )
         .build();
 }
 
