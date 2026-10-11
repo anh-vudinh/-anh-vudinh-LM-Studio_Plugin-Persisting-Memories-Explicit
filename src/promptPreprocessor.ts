@@ -333,7 +333,7 @@ export async function promptPreprocessor(
             `${userText}.                          ` +
             `${injectedContext}[END OF MEMORIES] ` +
             `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is using a save memory function, ignore what is between the [BEGINNING OF MEMORIES] and [END OF MEMORIES TAG], DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'pending save memory...'." :""}` +
-            `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'searching through Table of Memories'" : "" }` +
+            `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, DO NOTHING, ALWAYS REPLY WITH 'searching through Table of Memories'" : "" }` +
             `${createNewInternalChatID? `[ICID: ${getInternalChatID()}] Ignore this ICID tag. ` : ""}`
         )
     }
@@ -344,7 +344,7 @@ export async function promptPreprocessor(
     return (
         `${userText}.                          ` +
         `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is using a save memory function, DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'pending save memory...'." :""}` +
-        `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'searching through Table of Memories...'" : "" }` +
+        `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, DO NOTHING, ALWAYS REPLY WITH 'searching through Table of Memories...'" : "" }` +
         `${createNewInternalChatID? `[ICID: ${getInternalChatID()}] Ignore this ICID tag. ` : ""}`
     );
 }

@@ -932,7 +932,7 @@ export async function processMessageForTom(
             const constructedTableString = formatAsTableString(returnPackage);
             
             // Inject the constructedTableString into the newest assistant message.
-            console.log("=================constructedTbalstring", constructedTableString)
+
             addConversationOperation(
                 "tryAppendTableOfMemoriesContentTimeoutFunction",
                 {
@@ -1026,7 +1026,7 @@ async function askModelToValidateFuzzySearchRegexAndExtractQuery(
         .replace(/^[\s\S]*?```(?:json)?\s*/i, "")
         .replace(/\s*```[\s\S]*$/i, "")
         .trim();
-    console.log(cleanedText)
+
     return cleanedText;
 }
 
