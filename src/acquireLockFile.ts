@@ -12,33 +12,18 @@ import {
  * Needed to play with my context cleanup plugin.
  * https://github.com/anh-vudinh/LM-Studio_Context-Cleanup
  * 
- * Lock ownership is tracked at two levels:
- *
- * 1. `lockFileFunctions` tracks functions in this Node.js process that
- *    currently consider themselves owners of the logical lock.
- *
- * 2. The filesystem lock file provides cross-process coordination.
- *
- * When a lock file does not exist, the first caller creates it with
- * `open(..., "wx")` and becomes an owner.
- *
- * When this process already owns the logical lock, additional functions
- * using the same lock file are allowed to join the existing ownership
- * without creating another filesystem lock file.
- *
- * A filesystem lock that already exists may belong to another process/plugin.
- * In that case we wait for it to disappear, unless its mtime exceeds the
- * stale-lock timeout, in which case we remove it and retry.
- *
- * IMPORTANT:
- * Every successful `acquireLock(lockFile, functionName)` must have a
- * corresponding `releaseLock(lockFile, functionName)`.
- *
- * Each unique lock file has it's own queue, they are not consolidated into one
- * single queue.
+ * Lock works like this.
+ * User calls functions. Those functions send their functionName and paramerters over to multiEditCoordinator().
+ * MEC after multiple layered checks will acquire a lock file just before it's write operation.
+ * Technically this lock allows for multiple functions to call for their function stored in MEC to be run for that turn.
+ * Once a function has been run, it will be cleared from the remainingFunctions queue.
+ * ReleaseLock() will release the lock file once there are no remaining functions to be run.
+ * If you are not seeing the queue be populated I've tested it thoroughly it works. It's just that the write happens
+ * so fast in most instances that the queue will just be the one function straight to release.
  */
 
 const lockFileFunctions = new Map<string, string[]>();
+const lockOwnerCounters = new Map<string, number>();
 
 export function addLockFileFunction(
     lockFile: string,
@@ -87,26 +72,37 @@ export function getLockFileFunctions(
 export async function acquireLock(
     lockFile: string,
     functionName: string,
-): Promise<void> {
+): Promise<string> {
+
+    const ownerCount = (lockOwnerCounters.get(functionName) ?? 0) + 1;
+
+    lockOwnerCounters.set(functionName, ownerCount);
+
+    const uniqueFunctionName = `${functionName}_${ownerCount}`;
+
     const LOCK_STALE_TIMEOUT_MS = 20_000;
     const LOCK_WAIT_TIMEOUT_MS = 25_000;
     const POLL_INTERVAL_MS = 100;
-
     const startedAt = Date.now();
 
     while (true) {
-
-        // if (Date.now() - startedAt >= LOCK_WAIT_TIMEOUT_MS) {
-        //     throw new Error(
-        //         `Timed out waiting for lock: ${lockFile}`,
-        //     );
-        // }
+        
+        // Disabled if some functions may genuinely take a long time to release their lockfile.
+        // To enable this depends when you acquire the lock. If you do it before the lastassistantmessage check,
+        // tool calls most likely will time this out. If you do it just before the writeFile and it's passed all freshness tests, it will be useful.
+        // To stop a crashed/hung process.
+        if (Date.now() - startedAt >= LOCK_WAIT_TIMEOUT_MS) {
+            throw new Error(
+                `Timed out waiting for lock: ${lockFile}`,
+            );
+        }
 
         // PM already owns this lock.
         const currentFunctions = lockFileFunctions.get(lockFile);
 
         if (currentFunctions && currentFunctions.length > 0) {
-            addLockFileFunction(lockFile, functionName);
+
+            addLockFileFunction(lockFile, uniqueFunctionName);
 
             // console.log(
             //     "===== PM ALREADY OWNS LOCK =====",
@@ -119,13 +115,13 @@ export async function acquireLock(
             //     Date.now(),
             // );
 
-            return;
+            return uniqueFunctionName;
         }
 
         try {
             const handle = await open(lockFile, "wx");
 
-            addLockFileFunction(lockFile, functionName);
+            addLockFileFunction(lockFile, uniqueFunctionName);
 
             // console.log(
             //     "===== PM CREATED LOCK =====",
@@ -140,7 +136,8 @@ export async function acquireLock(
 
             await handle.close();
 
-            return;
+            return uniqueFunctionName;
+
         } catch (error) {
             const fsError = error as NodeJS.ErrnoException;
 
@@ -157,7 +154,7 @@ export async function acquireLock(
                 functionsAfterCollision &&
                 functionsAfterCollision.length > 0
             ) {
-                addLockFileFunction(lockFile, functionName);
+                addLockFileFunction(lockFile, uniqueFunctionName);
 
                 // console.log(
                 //     "===== PM ACQUIRED LOCK AFTER COLLISION =====",
@@ -170,7 +167,7 @@ export async function acquireLock(
                 //     Date.now(),
                 // );
 
-                return;
+                return uniqueFunctionName;
             }
 
             try {
@@ -239,8 +236,7 @@ export async function releaseLock(
         return;
     }
 
-    const remainingFunctions =
-        getLockFileFunctions(lockFile);
+    const remainingFunctions = getLockFileFunctions(lockFile);
 
     // console.log(
     //     "===== PM FUNCTION FINISHED =====",

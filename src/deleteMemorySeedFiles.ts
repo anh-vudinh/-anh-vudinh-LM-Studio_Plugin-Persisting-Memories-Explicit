@@ -16,8 +16,7 @@ export async function deleteMemorySeedFile(
     const [category, filename] = normalizedMemorySeed.split("/");
 
     try{
-        const memoriesDirectory =
-            await memoryStore.getMemoriesDirectory();
+        const memoriesDirectory = await memoryStore.getMemoriesDirectory();
 
         const memoryFile = join(
             memoriesDirectory,
@@ -39,18 +38,19 @@ export async function deleteMemorySeedFile(
                     filename,
                 );
             } catch (error) {
-                console.error(
-                    `Failed to remove "${normalizedMemorySeed}" from ${tomFileName}:`,
-                    error,
-                );
+                // console.error(
+                //     `Failed to remove "${normalizedMemorySeed}" from ${tomFileName}:`,
+                //     error,
+                // );
             }
 
             removeMemorySeedFromPool(normalizedMemorySeed);
+
             setConfigSchematics({memorySeedsPool: [...getMemorySeedsPool()]});
             
         } catch (error: any) {
             if (error.code === "ENOENT") {
-                console.error(`Error: Memory seed "${normalizedMemorySeed}" was not found.`);
+                // console.error(`deleteMemorySeedFile Error: Memory seed "${normalizedMemorySeed}" was not found.`);
             }
         }
         
@@ -70,7 +70,7 @@ export async function deleteMemorySeedFile(
                 await rmdir(categoryDirectory);
             } catch (error: any) {
                 if (error.code !== "EPERM" && error.code !== "ENOTEMPTY") {
-                    console.error(`Error: Category Directory "${categoryDirectory}" was not found.`);
+                    // console.error(`deleteMemorySeedFile Error: Category Directory "${categoryDirectory}" was not found.`);
                 }
             }
         }
@@ -79,7 +79,7 @@ export async function deleteMemorySeedFile(
 
     } catch (error: any) {
         if (error.code === "ENOENT") {
-            return `Error: Memory seed "${normalizedMemorySeed}" was not found.`;
+            return `deleteMemorySeedFile Error: Memory seed "${normalizedMemorySeed}" was not found.`;
         }
     }
 

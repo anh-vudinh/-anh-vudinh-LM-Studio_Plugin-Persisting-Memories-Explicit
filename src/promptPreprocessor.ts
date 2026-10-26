@@ -5,26 +5,25 @@ import { isEligibleAssistantMessage } from "./conversationReader";
 import { memoryStore } from "./memoryStore";
 import { removeMemorySeeds } from "./removeMemorySeeds";
 import { join, basename, relative } from "node:path";
-import { processMessage } from "./triggerSaveMemory"
-import { multiEditCoordinator } from "./multiEditCoordinator";
+import { processMessageForSaveMemory } from "./triggerSaveMemory"
+import { multiEditCoordinator, readFileWithRetries } from "./multiEditCoordinator";
 import { processMessageForTom, tableOfMemoriesMain } from "./tableOfMemories"
 import path from "node:path";
-import os from "os";
 
 import {
     addConversationOperation,
-    getPreviousTurnSavingState,
     getPendingSaveMemory,
     setController,
     getController,
     configSchematics,
     setConfigSchematics,
-    setPreviousTurnSavingState,
     getInternalChatID,
     setInternalChatID,
     getConversationFileName,
     setConversationFileName,
     getPendingTomCommand,
+    getValidatedLMSRootDirectory,
+    getValidatedMemoriesRootDirectory,
 } from "./config";
 
 import { 
@@ -38,6 +37,7 @@ import type {
     ChatMessage,
     PromptPreprocessorController,
 } from "@lmstudio/sdk";
+import { processMessageForCompactionSummary, tableOfCompactionsMain } from "./tableOfCompactions";
 
 let injectedMemorySeeds: string[] | null = null;
 let cleanupAllSeeds: boolean;
@@ -53,11 +53,7 @@ export async function promptPreprocessor(
 ): Promise<string | ChatMessage> {
 
     // Establish directories
-    const lmStudioRootDirectory = path.join(
-        os.homedir(),
-        ".lmstudio",
-    );
-    const memoriesDirectory = await memoryStore.getMemoriesDirectory();
+    const lmStudioRootDirectory = getValidatedLMSRootDirectory();
     const workingDirectory = ctl.getWorkingDirectory();
 
     // Establish initial variable values
@@ -71,6 +67,9 @@ export async function promptPreprocessor(
     let createNewInternalChatID = false;
     setController(ctl);
     const summarizeMemorySeeds = config.get("summarizeMemorySeeds") as boolean;
+    const retractOldToms = config.get("retractOldToms") as number;
+    const enableToolsMode = config.get("enableToolsMode") as boolean;
+    const deleteTocCollectionsAfterNthDays = config.get("deleteTocCollectionsAfterNthDays") as number;
 
     //------------------------------------
     // Maybe repair a missing relationship bond with in memory data
@@ -171,36 +170,28 @@ export async function promptPreprocessor(
     // END: CONVERSATION FILE NAME NOW KNOWN && ICID NOW KNOWN
     //----------------------------------------------------
 
+    // This function just has to do with the Initialize Table of Memories toggle in the Control Panel
+    // If you're looking for the text append logic it's controlled by processMessageForTom()
+    await tableOfMemoriesMain();
+
     //----------------------------------------------------
     // BEGIN: User Text Processing
     //----------------------------------------------------
-    // testing userText if it's a memory command and extracting key variables,
-    // taking the power away from unreliable model/tools approach from determining this.
-    await processMessage(userText);
-
-    const pendingSaveMemoryState = getPendingSaveMemory();
 
     // Test userText for tableofMemoryCommands
-    await processMessageForTom(userText);
+    await processMessageForTom(userText, retractOldToms, enableToolsMode);  // early return after checking for retractOldToms
+
+    // testing userText if it's a memory command and extracting key variables,
+    // taking the power away from unreliable model/tools approach from determining this.
+    await processMessageForSaveMemory(userText, messages, enableToolsMode);
     
+    await processMessageForCompactionSummary(userText, enableToolsMode);
+
     // Model appends message # at the end of the it's response
     // prerequisite to instructing to save memory
     const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
 
-    const previousTurnState =  getPreviousTurnSavingState();
-
-    // I don't remember exactly but I "think" this conditional was put in place to
-    // stop my number and save memory command from fighting for control and stalling out the assistant.
-    // So the check should be if the current turn was not a save memory mode based off .active and the previous turn
-    // was not either then number is allowed to handle the message.
-    if((pendingSaveMemoryState.active === false &&
-        previousTurnState === false) ||
-        previousTurnState === null
-    ) {
-        await promptProcessorAppendNewAssistantMessageToEndOfConversationJson(assistantIndex);
-
-        setPreviousTurnSavingState(null);
-    }
+    await promptProcessorAppendMessageNumberToLastAssistantMessage(assistantIndex);
 
     //----------------------------------------------------
     // BEGIN: Memory Seed Logic
@@ -281,12 +272,15 @@ export async function promptPreprocessor(
     // New valid seeds waiting to be injected
     if (newMemorySeeds.length > 0) {
 
-        injectedContext = await promptProcessorConstructMemoriesToInject(newMemorySeeds, memoriesDirectory, summarizeMemorySeeds);
+        injectedContext = await promptProcessorConstructMemoriesToInject(
+            newMemorySeeds, 
+            summarizeMemorySeeds
+        );
     }
 
-    // Remove all memory seeds
     const areSeedsDetectedInHistory = await promptProcessorHistorySimpleScanForSeeds(messages);
 
+    // Remove all memory seeds
     if(
         memorySeedsSelected.length === 0 && 
         areSeedsDetectedInHistory === true
@@ -311,42 +305,28 @@ export async function promptPreprocessor(
         cleanupAllSeeds = false;
 
         injectedMemorySeeds = await promptProcessorRemoveSeeds(
-            injectedMemorySeeds, 
-            validMemorySeedsSelected, 
-            cleanupAllSeeds
+            injectedMemorySeeds,
+            validMemorySeedsSelected,
+            cleanupAllSeeds,
         );
     }
 
-    await multiEditCoordinator(false);
+    await tableOfCompactionsMain(deleteTocCollectionsAfterNthDays);
+    
+    // This is passing through false for exitRequested for save memory command
+    await multiEditCoordinator(userText);
 
-    // This function just has to do with the Initialize Table of Memories toggle in the Control Panel
-    // If you're looking for the text append logic it's controlled by processMessageForTom()
-    await tableOfMemoriesMain();
-
+    // Only used for the explicit mode, not the tools mode
+    const pendingSaveMemoryState = getPendingSaveMemory();
     const pendingTomCommandState = getPendingTomCommand();
 
-    // MESSAGE WITH MEMORIES
-    if (injectedContext) {
-        // Sending prompt to model during saving memory active phase. This way it does not waste tokens and time
-        // pretending to play along and fake a save.
-        return (
-            `${userText}.                          ` +
-            `${injectedContext}[END OF MEMORIES] ` +
-            `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is using a save memory function, ignore what is between the [BEGINNING OF MEMORIES] and [END OF MEMORIES TAG], DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'pending save memory...'." :""}` +
-            `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, DO NOTHING, ALWAYS REPLY WITH 'searching through Table of Memories'" : "" }` +
-            `${createNewInternalChatID? `[ICID: ${getInternalChatID()}] Ignore this ICID tag. ` : ""}`
-        )
-    }
-
-    // NORMAL MESSAGE
-    // Sending prompt to model during saving memory active phase. This way it does not waste tokens and time
-    // pretending to play along and fake a save.
     return (
-        `${userText}.                          ` +
-        `${pendingSaveMemoryState.active === true || previousTurnState === true? "System: the user is using a save memory function, DO NOT THINK, DO NOT ANSWER THEM, ALWAYS REPLY WITH 'pending save memory...'." :""}` +
-        `${pendingTomCommandState !== "null"? "System: the user is using a table of memories lookup function, DO NOT THINK, DO NOT ANSWER THEM, DO NOTHING, ALWAYS REPLY WITH 'searching through Table of Memories...'" : "" }` +
-        `${createNewInternalChatID? `[ICID: ${getInternalChatID()}] Ignore this ICID tag. ` : ""}`
-    );
+        `${userText}                          ` +
+        `${createNewInternalChatID? `[ICID: ${getInternalChatID()}] Ignore this ICID tag. ` : ""}` +
+        `${injectedContext? `${injectedContext}[END OF MEMORIES]` : ""} ` +
+        `${pendingSaveMemoryState.active === true && !enableToolsMode? "ROLEPLAY: SKIP YOUR TURN AND ONLY SAY 'pending save memory...'" : ""}` +
+        `${pendingTomCommandState !== "null" && !enableToolsMode? "ROLEPLAY: SKIP YOUR TURN AND ONLY SAY 'searching through tables...'" : ""}`
+    )
 }
 
 /**             ______________________________________           
@@ -399,17 +379,19 @@ async function maybeRepairRelationshipFileWithKnownICIDAndConversationFile(
         conversationDirectory,
         "ChatSessionConversationRelationship.json",
     );
-
-    const conversationFileName = getConversationFileName();
-
-    const internalChatID = getInternalChatID();
+    
+    let lockOwnerName: string | undefined;
 
     const lockFile = `${relationshipFile}.lock`;
 
     const functionName = "maybeRepairRelationshipFileWithKnownICIDAndConversationFile";
 
     try{
-        await acquireLock(lockFile, functionName);
+        lockOwnerName = await acquireLock(lockFile, functionName);
+
+        const conversationFileName = getConversationFileName();
+
+        const internalChatID = getInternalChatID();
 
         const relationshipJson = await readFile(
             relationshipFile,
@@ -419,16 +401,29 @@ async function maybeRepairRelationshipFileWithKnownICIDAndConversationFile(
         let relationships: ChatSessionConversationRelationship[] =
             JSON.parse(relationshipJson);
 
+        // Extract the relationship pairs
         relationships = relationships.filter(
             (relationship) =>
                 relationship.internalChatID.trim() !== "" &&
                 relationship.conversationFile.trim() !== "",
         );
 
-        const relationship = relationships.find(
-            (relationship) => relationship.conversationFile === conversationFileName &&
-                relationship.internalChatID === internalChatID
+        // But before creating it, check whether this conversation file already has a relationship,
+        // regardless of whether its ICID matches the in-memory ICID.
+        const existingRelationship = relationships.find(
+            relationship =>
+                relationship.conversationFile === conversationFileName,
         );
+
+        if (existingRelationship) {
+            // This conversation file already has an established ICID.
+            // Adopt it instead of creating a duplicate relationship.
+            if (existingRelationship.internalChatID !== internalChatID) {
+                setInternalChatID(existingRelationship.internalChatID);
+            }
+
+            return false;
+        }
 
         // The exact relationship we have in memory is missing from the relationship file. CHOOSE ONLY ONE OPTION!!
         // That can only mean the user deleted the load bearing user message and deleted the relationship manually
@@ -437,26 +432,23 @@ async function maybeRepairRelationshipFileWithKnownICIDAndConversationFile(
         // OPTION 1: REPAIR THE RELATIONSHIP FILE WITH IN MEMORY DATA 
         // (must create a lock file with it's inherent delay)
         //---------------------------
-        if (!relationship) {
-                
-            relationships.push({
-                internalChatID: internalChatID,
-                conversationFile: conversationFileName,
-            });
+        relationships.push({
+            internalChatID,
+            conversationFile: conversationFileName,
+        });
 
-            // Keep only the newest relationships.
-            if (relationships.length > relationshipsLimit) {
-                relationships = relationships.slice(-relationshipsLimit);
-            }
-
-            await writeFile(
-                relationshipFile,
-                JSON.stringify(relationships, null, 2),
-                "utf-8",
-            );
-
-            return true;
+        // Keep only the newest relationships.
+        if (relationships.length > relationshipsLimit) {
+            relationships = relationships.slice(-relationshipsLimit);
         }
+
+        await writeFile(
+            relationshipFile,
+            JSON.stringify(relationships, null, 2),
+            "utf-8",
+        );
+
+        return true;
 
         //---------------------------
         // OPTION 2: RESET THE IN MEMORY DATA SO WE CAN GO THROUGH THE NORMAL PROCESS OF CREATING A BRAND NEW LINK 
@@ -467,15 +459,13 @@ async function maybeRepairRelationshipFileWithKnownICIDAndConversationFile(
         //     setInternalChatID("");
         // }
 
-        // Relationship already exists in the file
-        if(relationship) {
-            return false;
-        }
-
     } catch (error) {
         // move along
     } finally {
-        await releaseLock(lockFile, functionName);
+        if (lockOwnerName !== undefined) {
+            await releaseLock(lockFile, lockOwnerName);
+            lockOwnerName = undefined;
+        }
     }
 
     return false;
@@ -868,7 +858,7 @@ async function promptProcessorTryWorkingDirectoryConversationFile(
  * the user's input and a conversation file's clientInput or ICID marker.
  * Highest authority to rewrite the relationship file to update or remove mismatched pairs.
  */
-async function scanForConversationFileThruFullConversationDirectoryScan(
+export async function scanForConversationFileThruFullConversationDirectoryScan(
     rootDirectory: string,
     userText: string,
 ):Promise<void> {
@@ -948,6 +938,8 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
         "ChatSessionConversationRelationship.json",
     );
 
+    let lockOwnerName: string | undefined;
+
     const lockFile = `${relationshipFile}.lock`;
 
     const functionName = "scanForConversationFileThruFullConversationDirectoryScan";
@@ -955,7 +947,15 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
     // We should now have both ICID and ConversationFileName in memory
     // Check the relationship file if it already exists, if not we need to create it
     try {
-        await acquireLock(lockFile, functionName);
+        lockOwnerName = await acquireLock(lockFile, functionName);
+
+        let resolvedConversationFileName = getConversationFileName();
+        let resolvedInternalChatID = getInternalChatID();
+
+        // Exit don't attempt to write
+        if (resolvedConversationFileName === "" || resolvedInternalChatID === "") {
+            return;
+        }
 
         const relationshipJson = await readFile(
             relationshipFile,
@@ -966,16 +966,38 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
             JSON.parse(relationshipJson);
 
         const relationship = relationships.find(
-            (relationship) => relationship.internalChatID === currentInternalChatID &&
-                relationship.conversationFile === getConversationFileName(),
+            (relationship) => relationship.internalChatID === resolvedInternalChatID &&
+                relationship.conversationFile === resolvedConversationFileName,
         );
 
         // If they already perfectly match we don't need to do anything
         if (relationship) {
             setConversationFileName(normalizeJsonFileName(relationship.conversationFile));
             setInternalChatID(relationship.internalChatID);
-            return;
+        } else {
+            // Check whether this conversation file already has a relationship,
+            // regardless of whether its ICID matches the in-memory ICID.
+            // This code snippet was to address the companion plugin which shares the same logic from
+            // assigning it's own to the file if the winner already established and icid in the relationship file
+            // at the following second unix timestamp. imagine 10 ms before the next second ticks and the loser lagged behind of
+            // and created a new icid on the following second.
+            const existingRelationship = relationships.find(
+                relationship =>
+                    relationship.conversationFile === resolvedConversationFileName,
+            );
+
+            if (existingRelationship) {
+                // This conversation file already has an established ICID.
+                // Adopt it instead of creating a duplicate relationship.
+                if (existingRelationship.internalChatID !== resolvedInternalChatID) {
+                    setInternalChatID(existingRelationship.internalChatID);
+                }
+            }
         }
+
+        // update the values after previous adoptions.
+        resolvedConversationFileName = getConversationFileName();
+        resolvedInternalChatID = getInternalChatID();
 
         // If there was not a perfect match, we need to create a new one or modify an old existing relationship
 
@@ -986,8 +1008,8 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
             }))
             .filter(
                 ({ relationship }) =>
-                    relationship.internalChatID === getInternalChatID() ||
-                    relationship.conversationFile === getConversationFileName(),
+                    relationship.internalChatID === resolvedInternalChatID ||
+                    relationship.conversationFile === resolvedConversationFileName,
             );
 
         if (matchingIndexes.length > 0) {
@@ -1000,8 +1022,8 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
             );
 
             filteredRelationships.push({
-                internalChatID: getInternalChatID(),
-                conversationFile: getConversationFileName(),
+                internalChatID: resolvedInternalChatID,
+                conversationFile: resolvedConversationFileName,
             });
 
             const relationshipsToWrite =
@@ -1018,8 +1040,8 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
         } else {
 
             relationships.push({
-                internalChatID: getInternalChatID(),
-                conversationFile: getConversationFileName(),
+                internalChatID: resolvedInternalChatID,
+                conversationFile: resolvedConversationFileName,
             });
 
             const relationshipsToWrite =
@@ -1037,7 +1059,10 @@ async function scanForConversationFileThruFullConversationDirectoryScan(
     } catch (error: any) {
         console.error(`scanForConversationFileThruFullConversationDirectoryScan error: ${error.message}`);
     } finally {
-        await releaseLock(lockFile, functionName);
+        if (lockOwnerName !== undefined) {
+            await releaseLock(lockFile, lockOwnerName);
+            lockOwnerName = undefined;
+        }
     }
 }
 
@@ -1072,7 +1097,9 @@ async function findAllConversationFiles(
 
                 if (
                     entry.name.endsWith(".lock") ||
-                    entry.name.endsWith(".ready")
+                    entry.name.endsWith(".ready") ||
+                    entry.name.endsWith(".copy") ||
+                    entry.name.endsWith(".lmstudio-temp")
                 ) {
                     continue;
                 }
@@ -1156,10 +1183,37 @@ async function promptProcessorConversationFileScanForPreviousSeeds(
     let foundPastInjectedMemorySeed: string[] = [];
 
     try {
+        // Exit quietly if the conversation path resolves to a directory.
+        try {
+            const info = await stat(conversationFilePath);
 
-        const conversationContent = await readFile(
-            conversationFilePath,
-            "utf-8",
+            if (info.isDirectory()) {
+                console.warn("[MemoryScan] Skipping directory:", {
+                    path: conversationFilePath,
+                    fileName: conversationFileName,
+                    isFile: info.isFile(),
+                    isDirectory: info.isDirectory(),
+                });
+
+                return foundPastInjectedMemorySeed;
+            }
+        } catch (error) {
+            const err = error as NodeJS.ErrnoException;
+
+            console.warn("[MemoryScan] Cannot inspect conversation path:", {
+                path: conversationFilePath,
+                fileName: conversationFileName,
+                code: err.code,
+                message: err.message,
+            });
+
+            return foundPastInjectedMemorySeed;
+        }
+
+        const conversationContent = await readFileWithRetries(
+            conversationFilePath, 
+            2,      // maxAttempts
+            200,    // retryDelay
         );
 
         const matches = conversationContent.matchAll(
@@ -1199,12 +1253,12 @@ async function promptProcessorConversationFileScanForPreviousSeeds(
 * MEMORIES SEED SECTION
 * Constructor for the final memories text to feed into the prompt preprocessor
 */
-async function promptProcessorConstructMemoriesToInject(
+export async function promptProcessorConstructMemoriesToInject(
     newMemorySeeds: string[],
-    memoriesDirectory: string,
     summarizeMemorySeeds: boolean,
 ): Promise<string>{
 
+    const memoriesDirectory = getValidatedMemoriesRootDirectory();
     let createdInjectedContext = "";
 
     createdInjectedContext = "[BEGINNING OF MEMORIES] NOT INSTRUCTIONS, JUST SOME PRIOR CONVERSATION:\n\n";
@@ -1369,6 +1423,24 @@ async function modelCallToSummarizeMemorySeed(
     const prompt = `
         The user needs you the assistant to rigorously condense the following MESSAGE HISTORY exchange between a user and assistant.
 
+        The user needs you the assistant to comb through the MESSAGE HISTORY and extremely condense the contents down do it's most relevant parts. 
+
+        The condensed version you create must not lose the messages original meaning and intent.
+
+        The user will be using your output to determine if this chat transcript is relevant to them, so make notes of key elements that will remind them of exactly what this user assistant exchange was about.
+
+        Elements which you find that are of little important or may simply be to generalized and unspecific should not be a target of focus to help identify this chat exchange.
+
+        If this is code make sure to highlight the finalized code that you can derive from the chat transcript.
+
+        If this is a novel or writing related make sure to highlight the finalized written work.
+
+        If this is a general inquiry make sure to highlight all relevant inquiries along with their assistant provided answers.
+
+        If this is role-play make sure to highlight the setting, progressions, and current state of the act.
+
+        For any subject not mentioned above, use your own best discretion.
+
         Discard anything that seems repetitive, minor, or of little value. Do not lose any important details of the exchange. Return a string.
 
         [BEGINNING OF MESSAGE HISTORY]: 
@@ -1445,15 +1517,15 @@ export function normalizeJsonFileName(jsonFileName: string){
 }
 
 /**
- * Flow is prompt preprocessor → promptProcessorAppendNewAssistantMessageToEndOfConversationJson → multiEditCoordinator
+ * Flow is prompt preprocessor → promptProcessorAppendMessageNumberToLastAssistantMessage → multiEditCoordinator
  * → promptProcessorConstructMessageNumberTag → multiEditCoordinator(conversation.json write)
  */
-async function promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
+async function promptProcessorAppendMessageNumberToLastAssistantMessage(
     assistantIndex: number,
 ): Promise<void> {
 
     addConversationOperation(
-        "promptProcessorAppendNewAssistantMessageToEndOfConversationJson",
+        "promptProcessorAppendMessageNumberToLastAssistantMessage",
         {
             assistantIndex,
         },
@@ -1467,16 +1539,11 @@ async function promptProcessorAppendNewAssistantMessageToEndOfConversationJson(
 export function promptProcessorConstructMessageNumberTag(
     conversation: any,
     assistantIndex: number,
+    targetAssistantMessageIndex: number,
 ): void {
 
-    // Find the last assistant message
-    const assistantMessage = [...conversation.messages]
-        .reverse()
-        .find((message: any) =>
-            message.versions?.[
-                message.currentlySelected ?? 0
-            ]?.role === "assistant",
-        );
+    // Find the last assistant message for this MEC instance
+    const assistantMessage = conversation.messages[targetAssistantMessageIndex];
 
     if (!assistantMessage) {
         throw new Error("No assistant message found.");
@@ -1514,7 +1581,7 @@ export function promptProcessorConstructMessageNumberTag(
         shouldIncludeInContext: false,
         };
 
-        const markerExists = assistantVersion.steps.some(
+    const markerExists = assistantVersion.steps.some(
         (step: any) =>
             step.type === "contentBlock" &&
             step.content?.some(
@@ -1540,7 +1607,10 @@ export function promptProcessorConstructMessageNumberTag(
     }
 }
 
-function getConversationRelativePath(
+/**
+ * To capture the conversation files that are within nested folders
+ */
+export function getConversationRelativePath(
     conversationsDirectory: string,
     conversationFilePath: string,
 ): string {

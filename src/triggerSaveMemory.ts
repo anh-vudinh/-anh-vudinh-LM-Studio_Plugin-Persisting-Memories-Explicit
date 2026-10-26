@@ -2,11 +2,11 @@ import { memoryStore } from "./memoryStore";
 import type { MemorySeed } from "./memoryStore";
 import { getCurrentConversationHistory } from "./conversationHistoryCache";
 import { associateAssistantResponse } from "./memoryAssociation";
-import { cleanUserInput, isEligibleAssistantMessage } from "./conversationReader"
+import { cleanUserInput } from "./conversationReader"
+import type { ChatMessage } from "@lmstudio/sdk";
 
 import {
     addConversationOperation,
-    setPreviousTurnSavingState,
     getController,
     setPendingSaveMemory,
     getPendingSaveMemory,
@@ -15,6 +15,9 @@ import {
     getCategoryExtractRegex,
     getNameExtractRegex,
     getExitSaveMemoryRegex,
+    getSaveMemoryRegex,
+    getMultiSaveMemoryRegex,
+    configSchematics,
 } from "./config"
 
 // ============================================================
@@ -22,20 +25,15 @@ import {
 // ============================================================
 
 // Save-memory command.
-const SAVE_MEMORY_REGEX =
-    /\b(?:save|sav|sve|sv|store|remember|persist)\s*(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\s*(?:message|msg)?\s*(\d+)/i;
+const SAVE_MEMORY_REGEX = getSaveMemoryRegex();
 
-const MULTI_SAVE_MEMORY_REGEX =
-    /\b(?:save|sav|sve|sv|store|remember|persist)\s*(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\s*(?:message|msg|messages|msgs)?\s*(\d+)\s*(?:through|thru|thrugh|thruogh|to|too)\s*(\d+)/i;
+const MULTI_SAVE_MEMORY_REGEX = getMultiSaveMemoryRegex();
 
-const CATEGORY_EXTRACT_REGEX =
-    /^(?:the\s+)?(?:memory|mem|mm|mmry|memry|mry|mmy|memy)?\s*(?:category|categroy|categary|categry|catgry|catagory|catgory|categoy)\b\s+(?:is\s+)?(.+)$/i;
+const CATEGORY_EXTRACT_REGEX = getCategoryExtractRegex();
 
-const NAME_EXTRACT_REGEX =
-    /^(?:the\s+)?(?:memory|mem|mm|mmry|memry|mry|mmy|memy)?\s*(?:name|nmae|nam|nme)\b\s+(?:is\s+)?(.+)$/i;
+const NAME_EXTRACT_REGEX = getNameExtractRegex();
 
-const EXIT_SAVE_MEMORY_REGEX =
-    /\bexit\b\s+(?:save|sav|sve|sv|store|remember|persist)\b\s+(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i;
+const EXIT_SAVE_MEMORY_REGEX = getExitSaveMemoryRegex();
 
 // ============================================================
 // FIELD EXTRACTION
@@ -91,9 +89,41 @@ interface SaveMemoryResult {
 // MAIN MESSAGE PROCESSOR
 // ============================================================
 
-export async function processMessage(
+export async function processMessageForSaveMemory(
     userText: string,
-): Promise<SaveMemoryResult> {
+    messages: ChatMessage[],
+    enableToolsMode: boolean,
+): Promise<SaveMemoryResult | null> {
+
+    // --------------------------------------------------------
+    // Check whether this message contains an exit command
+    // --------------------------------------------------------
+
+    const exitMatch = userText.match(EXIT_SAVE_MEMORY_REGEX);
+    
+    const exitRequested = exitMatch !== null? true : false;
+
+    if (enableToolsMode && exitRequested) {
+        resetPendingSaveMemory();
+    }
+
+    // Early exit to not process userText other than an exit command
+    // Everything else should be handled by the assistant
+    if (enableToolsMode) {
+        return null;
+    }
+
+    if (!enableToolsMode) {
+        // If the last assistant message was an incomplete save command, and the plugin/chat timed out before completion
+        // we re-enable the save memory mode as the assistant's next message.
+        const reinitializedIncompletedSaveCommand = await scanHistoryForIncompleteSaveMemoryCommand(userText, messages);
+
+        if(reinitializedIncompletedSaveCommand) {
+            userText = exitRequested
+            ? userText 
+            : reinitializedIncompletedSaveCommand;
+        }
+    }
 
     // --------------------------------------------------------
     // Check whether this message contains a save-memory command.
@@ -107,7 +137,6 @@ export async function processMessage(
             memoryNumber: Number(saveMatch[1]),
             memoryNumberEndRange: null,
         });
-        setPreviousTurnSavingState(true);
     }
 
     // --------------------------------------------------------
@@ -125,16 +154,7 @@ export async function processMessage(
             memoryNumber: startMemoryNumber,
             memoryNumberEndRange: endMemoryNumber,
         });
-        setPreviousTurnSavingState(true);
     }
-
-    // --------------------------------------------------------
-    // Check whether this message contains an exit command
-    // --------------------------------------------------------
-
-    const exitMatch = userText.match(EXIT_SAVE_MEMORY_REGEX);
-    
-    const exitRequested = exitMatch !== null? true : false;
 
     // --------------------------------------------------------
     // If we're not currently in save-memory mode,
@@ -144,7 +164,6 @@ export async function processMessage(
     const current = getPendingSaveMemory();
 
     if (!current.active) {
-        setPreviousTurnSavingState(null);
         return {
             action: "none",
         };
@@ -216,16 +235,9 @@ export async function processMessage(
         updated.fileName !== null &&
         updated.memoryNumberEndRange !== null
     ) {
+        const savedMemoryStatus = await multiSaveMemory(updated);
 
-        await appendSaveMemoryTextAtEndOfConversationJson(exitRequested);
-
-        await multiSaveMemory({
-            startMemoryNumber: updated.memoryNumber,
-            endMemoryNumber: updated.memoryNumberEndRange,
-            category: updated.category,
-            fileName: updated.fileName,
-            },
-        );
+        await appendSaveMemoryTextAtEndOfConversationJson(exitRequested, updated, enableToolsMode, savedMemoryStatus);
 
         return {
             action: "saved",
@@ -242,15 +254,9 @@ export async function processMessage(
         updated.fileName !== null &&
         updated.memoryNumberEndRange === null
     ) {
+        const savedMemoryStatus = await saveMemory(updated);
 
-        await appendSaveMemoryTextAtEndOfConversationJson(exitRequested);
-
-        await saveMemory({
-            memoryNumber: updated.memoryNumber,
-            category: updated.category,
-            fileName: updated.fileName,
-            },
-        );
+        await appendSaveMemoryTextAtEndOfConversationJson(exitRequested, updated, enableToolsMode, savedMemoryStatus);
 
         return {
             action: "saved",
@@ -261,7 +267,7 @@ export async function processMessage(
     // STILL WAITING FOR SOMETHING
     // ========================================================
     
-    await appendSaveMemoryTextAtEndOfConversationJson(exitRequested);
+    await appendSaveMemoryTextAtEndOfConversationJson(exitRequested, updated, enableToolsMode);
 
     return {
         action: "waiting",
@@ -278,25 +284,30 @@ export async function processMessage(
 
 /**
  * Flow is prompt preprocessor → appendSaveMemoryTextAtEndOfConversationJson → multiEditCoordinator
- * → tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction → string constructors → editAssistantResponse →
- * (all fields given) → saveMemory → appendSaveMemoryTextAtEndOfConversationJson → tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction
+ * → tryAppendSaveMemoryTextAtEndOfConversationJsonFunction → string constructors → editAssistantResponse →
+ * (all fields given) → saveMemory → appendSaveMemoryTextAtEndOfConversationJson → tryAppendSaveMemoryTextAtEndOfConversationJsonFunction
  * → multiEditCoordinator(conversation.json write)
  */
 async function appendSaveMemoryTextAtEndOfConversationJson(
     exitRequested: boolean,
+    pendingSaveMemory: PendingSaveMemory,
+    enableToolsMode: boolean,
+    savedMemoryStatus?: boolean,
 ): Promise<void> {
 
-    const pendingSaveMemory = getPendingSaveMemory();
-
+    if (enableToolsMode) return;
     // Queuing save memory logic to write conversation.json
     // Passing params required by children functions over
     addConversationOperation(
-        "tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction",
+        "tryAppendSaveMemoryTextAtEndOfConversationJsonFunction",
         {
             exitRequested,
             pendingSaveMemory,
+            savedMemoryStatus,
         },
     );
+
+    setPendingSaveMemory({active: true});
 
     //=================================================
     // CODE NOW RUNS FROM multiEditCoordinator.ts
@@ -306,10 +317,12 @@ async function appendSaveMemoryTextAtEndOfConversationJson(
 /**
  * multiEditCoordinator calls this function
  */
-export async function tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunction(
+export async function tryAppendSaveMemoryTextAtEndOfConversationJsonFunction(
     exitRequested: boolean,
     latestConversation: any,
     pendingSaveMemory: PendingSaveMemory,
+    targetAssistantMessageIndex: number,
+    savedMemoryStatus?: boolean,
 ): Promise<void> {
 
     let lines: string[] = [];
@@ -318,7 +331,6 @@ export async function tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunct
     if(exitRequested === true) {
         lines = (await constructAssistantReplySaveMemoryExit(pendingSaveMemory));
     } else {
-
         // Category or File Name fields missing path
         if(
             pendingSaveMemory.category === null ||
@@ -327,32 +339,34 @@ export async function tryAppendSaveMemoryTextAtEndOfConversationJsonTimeoutFunct
             lines = (await constructAssistantReplyForMissingFields(pendingSaveMemory));
         }
 
-        // Saved Memory path
+        // Saving Memory Success path
         if(pendingSaveMemory.category !== null &&
-            pendingSaveMemory.fileName !== null){
+            pendingSaveMemory.fileName !== null) {
             lines = (await constructAssistantReplySaveMemory(pendingSaveMemory));
+        }
+
+        // Saving process failed path
+        if (savedMemoryStatus === false) {
+            lines = (await constructAssistantReplySaveMemoryNothingToSave(pendingSaveMemory));
         }
     }
     
     await editAssistantResponse(
         latestConversation,
         lines.join("\n\n"),
+        targetAssistantMessageIndex,
     );
 }
 
 export async function editAssistantResponse(
     conversation: any,
     replacementText: string,
+    targetAssistantMessageIndex: number,
+    appendInstead?: boolean,
 ): Promise<void> {
 
     // Find the last assistant message
-    const assistantMessage = [...conversation.messages]
-        .reverse()
-        .find((message: any) =>
-            message.versions?.[
-                message.currentlySelected ?? 0
-            ]?.role === "assistant",
-        );
+    const assistantMessage = conversation.messages[targetAssistantMessageIndex];
 
     if (!assistantMessage) {
         throw new Error("No assistant message found.");
@@ -396,95 +410,77 @@ export async function editAssistantResponse(
         throw new Error("Could not find assistant response text.");
     }
 
-    // Replace the assistant's response
-    textBlock.text = replacementText;
-
-    // Find debugInfoBlock
-    const debugInfoIndex = assistantVersion.steps.findIndex(
-        (step: any) => step.type === "debugInfoBlock",
-    );
-
-    const messages = (await getCurrentConversationHistory()).getMessagesArray();
-    const assistantIndex = messages.filter(isEligibleAssistantMessage).length + 1;
-
-    // Create the new content block
-    const markerBlock = {
-        type: "contentBlock",
-        stepIdentifier: String(Date.now()),
-        content: [
-            {
-            type: "text",
-            text: `\n\n***message ${assistantIndex}***`,
-            fromDraftModel: false,
-            tokensCount: 1,
-            isStructural: false,
-            },
-        ],
-        defaultShouldIncludeInContext: false,
-        shouldIncludeInContext: false,
-        };
-
-        const markerExists = assistantVersion.steps.some(
-        (step: any) =>
-            step.type === "contentBlock" &&
-            step.content?.some(
-                (contentBlock: any) =>
-                    contentBlock.type === "text" &&
-                    contentBlock.text === `\n\n***message ${assistantIndex}***`,
-            ),
-    );
-
-    // Try to add marker block object before debug.
-    // If that doesn't exist just add after the last role: assistant content block.
-    const insertIndex =
-        debugInfoIndex !== -1
-            ? debugInfoIndex
-            : assistantVersion.steps.length;
-
-    if (!markerExists) {
-        assistantVersion.steps.splice(
-            insertIndex,
-            0,
-            markerBlock,
+    // the appendinstead path is if we are applying the compaction trail to the
+    // first assistant's message. This removes the old trail and preserves the original user message
+    // Also the 🚨 should not cause this first assitant message to be filtered out as metadata
+    // because the appending only happens after the original message has been processed and saved to part1.
+    if (appendInstead) {
+        const startMarker = textBlock.text.indexOf("🚨");
+        const endMarker = textBlock.text.indexOf(
+            "⬇️[Assistant Message]⬇️",
+            startMarker,
         );
+
+        if (startMarker !== -1 && endMarker !== -1) {
+            textBlock.text =
+                textBlock.text.slice(0, startMarker) +
+                textBlock.text.slice(
+                    endMarker + "⬇️[Assistant Message]⬇️".length,
+                );
+        }
+
+        textBlock.text = textBlock.text
+            ? `${replacementText}\n\n${textBlock.text}`
+            : replacementText;
+    } else {
+        // Replace the assistant's response
+        textBlock.text = replacementText;
     }
 }
 
-async function saveMemory({
-    memoryNumber,
-    category,
-    fileName
-}: {
-    memoryNumber: number,
-    category: string,
-    fileName: string,
-}): Promise<void> {
-
+export async function saveMemory(
+    updated: PendingSaveMemory
+): Promise<boolean> {
     const ctl = getController();
+    const enableToolsMode = ctl.getPluginConfig(configSchematics).get("enableToolsMode") as boolean;
+
+    const { memoryNumber, category, fileName } = updated;
+
+    if (
+        memoryNumber === null ||
+        category === null ||
+        fileName === null
+    ) return false;
 
     try {
         const history = await getCurrentConversationHistory();
 
-        // Start the memory saving
         const association = await associateAssistantResponse(
             ctl.client,
             history,
             memoryNumber,
         );
 
+        // Do not save memory if assistant message was metadata only
+        if (association === null) {
+            return false;
+        }
+
         // Added some tolerance because users technically could delete all
         // their user messages before asking the model to save a memory
-        const cleanedRootInput = cleanUserInput(association.rootInput?.trim());
+        const cleanedRootInput =
+            cleanUserInput(association.rootInput?.trim());
 
         const rootInput = cleanedRootInput !== ""
-        ? cleanedRootInput 
-        : "original user intention/topic was fully scrubbed";
+            ? cleanedRootInput
+            : "original user intention/topic was fully scrubbed";
 
-        const cleanedDirectInput = cleanUserInput(association.directInput?.trim());
+        const cleanedDirectInput =
+            cleanUserInput(association.directInput?.trim());
 
         const directInput = cleanedDirectInput !== ""
-        ? cleanedDirectInput
-        : "original user message was fully scrubbed";
+            ? cleanedDirectInput
+            : "original user message was fully scrubbed";
 
         await memoryStore.saveSeed(
             category,
@@ -497,9 +493,12 @@ async function saveMemory({
             },
             memoryNumber,
         );
+        if(!enableToolsMode) {
+            // Write to conversation.json a save message content block
+            await appendSaveMemoryTextAtEndOfConversationJson(false, updated, enableToolsMode);
+        }
 
-        // Write to conversation.json a save message content block
-        await appendSaveMemoryTextAtEndOfConversationJson(false);
+        return true;
 
     } catch (error) {
         console.error(
@@ -507,33 +506,39 @@ async function saveMemory({
             `${error instanceof Error ? error.message : String(error)}`
         );
 
+        return false;
+
     } finally {
-        // Reset state for new tool calls
-        // previousTurnSavingState is to prevent the normal path from
-        // trying to append when save handles the appending of message #.
-        // Possible reduction here because writes are handled by the coordinator now.
-        setPreviousTurnSavingState(true);
         resetPendingSaveMemory();
     }
 }
 
-async function multiSaveMemory({
-    startMemoryNumber,
-    endMemoryNumber,
-    category,
-    fileName
-}: {
-    startMemoryNumber: number,
-    endMemoryNumber: number,
-    category: string,
-    fileName: string,
-}): Promise<void> {
-
+// simple boolean return true success if something saved, false failure because messages were ineligible
+export async function multiSaveMemory(
+    updated: PendingSaveMemory,
+): Promise<boolean> {
     const ctl = getController();
+    const enableToolsMode = ctl.getPluginConfig(configSchematics).get("enableToolsMode") as boolean;
+
+    const {
+        memoryNumber: startMemoryNumber,
+        memoryNumberEndRange: endMemoryNumber,
+        category,
+        fileName,
+    } = updated;
+
+    if (
+        startMemoryNumber == null ||
+        endMemoryNumber == null ||
+        category == null ||
+        fileName == null
+    ) {
+        return false;
+    }
 
     try {
         const history = await getCurrentConversationHistory();
-
+        
         const seeds: MemorySeed[] = [];
 
         for (
@@ -541,54 +546,69 @@ async function multiSaveMemory({
             memoryNumber <= endMemoryNumber;
             memoryNumber++
         ) {
-            const association = await associateAssistantResponse(
-                ctl.client,
-                history,
-                memoryNumber,
-            );
+            let association;
+
+            try {
+                association = await associateAssistantResponse(
+                    ctl.client,
+                    history,
+                    memoryNumber,
+                );
+            } catch (error) {
+                console.error(
+                    `Failed to associate assistant response ${memoryNumber}; skipping it: ` +
+                    `${error instanceof Error ? error.message : String(error)}`,
+                );
+
+                // Skip this memory number and continue with the next.
+                continue;
+            }
+
+            // Assistant response was metadata only.
+            if (association === null) {
+                continue;
+            }
 
             const cleanedRootInput = cleanUserInput(association.rootInput?.trim());
 
             const cleanedDirectInput = cleanUserInput(association.directInput?.trim());
 
-            if (
-                isMetadataOnlyInput(cleanedDirectInput)
-            ) {
+            // User input was metadata only.
+            if (isMetadataOnlyInput(cleanedDirectInput)) {
                 continue;
             }
 
-            // Only save seeds that have both root and direct inputs
+            // Both root and direct inputs are usable.
             if (
-            cleanedRootInput !== "" && 
-            cleanedDirectInput !== ""
+                cleanedRootInput !== "" &&
+                cleanedDirectInput !== ""
             ) {
-            seeds.push({
-                date: new Date().toISOString(),
-                root_input: cleanedRootInput,
-                direct_input: cleanedDirectInput,
-                output: association.assistantResponse,
-            });
-            }
-
-            // Root Input fully scrubbed but direct input is still usable
-            // Just use DirectInput to be a placeholder for RootInput
-            if (
-            cleanedRootInput === "" &&
-            cleanedDirectInput !== ""
+                seeds.push({
+                    date: new Date().toISOString(),
+                    root_input: cleanedRootInput,
+                    direct_input: cleanedDirectInput,
+                    output: association.assistantResponse,
+                });
+            } else if (
+                cleanedRootInput === "" &&
+                cleanedDirectInput !== ""
             ) {
-            seeds.push({
-                date: new Date().toISOString(),
-                root_input: cleanedDirectInput,
-                direct_input: cleanedDirectInput,
-                output: association.assistantResponse,
-            });
+                // Use DirectInput as a placeholder for RootInput.
+                seeds.push({
+                    date: new Date().toISOString(),
+                    root_input: cleanedDirectInput,
+                    direct_input: cleanedDirectInput,
+                    output: association.assistantResponse,
+                });
             }
-
-            // UserInput unusable, skip the save
         }
 
-        // All seeds go into the same file in one read/write operation.
-        // startMemoryNumber satisfies the existing save-memory-number check.
+        // No eligible seeds were collected.
+        if (seeds.length === 0) {
+            return false;
+        }
+
+        // Save all collected seeds in one write operation.
         await memoryStore.saveMultipleSeeds(
             category,
             fileName,
@@ -596,16 +616,20 @@ async function multiSaveMemory({
             startMemoryNumber,
         );
 
-        await appendSaveMemoryTextAtEndOfConversationJson(false);
+        if(!enableToolsMode) {
+            await appendSaveMemoryTextAtEndOfConversationJson(false, updated, enableToolsMode);
+        }
+
+        return true;
 
     } catch (error) {
         console.error(
             "Error creating Memory Seed: " +
-            `${error instanceof Error ? error.message : String(error)}`
+            `${error instanceof Error ? error.message : String(error)}`,
         );
 
+        return false;
     } finally {
-        setPreviousTurnSavingState(true);
         resetPendingSaveMemory();
     }
 }
@@ -621,7 +645,11 @@ export async function constructAssistantReplySaveMemory(
     const lines: string[] = [];
 
     lines.push(
-        `**[ Message ${pendingSaveMemory.memoryNumber}${pendingSaveMemory.memoryNumberEndRange !== null? ` - ${pendingSaveMemory.memoryNumberEndRange}` : ""} ]**`+
+        '⏳ **`SAVE MEMORY MODE`**'
+    );
+
+    lines.push(
+        `✅ **[ Message ${pendingSaveMemory.memoryNumber}${pendingSaveMemory.memoryNumberEndRange !== null? ` — ${pendingSaveMemory.memoryNumberEndRange}` : ""} ]**`+
         ` was successfully saved as ***${pendingSaveMemory.category}/${pendingSaveMemory.fileName}.json***`
     );
 
@@ -635,18 +663,22 @@ export async function constructAssistantReplyForMissingFields(
     const lines: string[] = [];
 
     lines.push(
+        '⏳ **`SAVE MEMORY MODE`**'
+    );
+
+    lines.push(
         '**Please provide the following missing information with its required prefix:**'
     );
 
     if (pendingSaveMemory.category === null) {
         lines.push(
-            '- Category Name: `category <category_here>`.',
+            '❌ Category Name: `category <category_here>`.',
         );
     }
 
     if (pendingSaveMemory.fileName === null) {
         lines.push(
-            '- Memory Name: `name <name_here>`.',
+            '❌ Memory Name: `name <name_here>`.',
         );
     }
 
@@ -663,7 +695,24 @@ export async function constructAssistantReplyForMissingFields(
     }
 
     lines.push(
-        '*To forcefully end this save memory attempt say:* `exit save memory`'
+        '⚠️ *To forcefully end this save memory attempt say:* `exit save memory`'
+    );
+
+    lines.push(
+        `✅ *${[
+            "known —",
+            pendingSaveMemory.memoryNumberEndRange !== null
+                ? `Messages: ${pendingSaveMemory.memoryNumber} to ${pendingSaveMemory.memoryNumberEndRange};`
+                : `Message: ${pendingSaveMemory.memoryNumber};`,
+            pendingSaveMemory.category !== null
+                ? `Category: ${pendingSaveMemory.category};`
+                : "",
+            pendingSaveMemory.fileName !== null
+                ? `Name: ${pendingSaveMemory.fileName};`
+                : "",
+        ]
+            .filter(Boolean)
+            .join(" ")}*`,
     );
     
     return lines;
@@ -676,27 +725,53 @@ export async function constructAssistantReplySaveMemoryExit(
     const lines: string[] = [];
 
     lines.push(
-        `Exiting Save Memory Request of **[Message ${pendingSaveMemory.memoryNumber}]**`
+        '⏳ **`SAVE MEMORY MODE`**'
     );
 
     lines.push(
-        `- Category: ${pendingSaveMemory.category === null
-            ? `[ Not Provided ]`
-            : `[ ${pendingSaveMemory.category} ]`
-        }`
-    );
-
-    lines.push(
-        `- Memory Name: ${pendingSaveMemory.fileName === null
-            ? `[ Not Provided ]`
-            : `[ ${pendingSaveMemory.fileName} ]`
-        }`
+        `🛑${[
+            "Exiting Save Memory Request of ***[",
+            pendingSaveMemory.memoryNumberEndRange !== null
+                ? `Messages: ${pendingSaveMemory.memoryNumber} to ${pendingSaveMemory.memoryNumberEndRange}`
+                : `Message: ${pendingSaveMemory.memoryNumber}`,
+            "]***",
+        ]
+            .filter(Boolean)
+            .join(" ")}`,
     );
 
     return lines;
 }
 
-function isMetadataOnlyInput(input: string): boolean {
+export async function constructAssistantReplySaveMemoryNothingToSave(
+    pendingSaveMemory: PendingSaveMemory,
+): Promise<string[]>{
+    
+    const lines: string[] = [];
+
+    lines.push(
+        '⏳ **`SAVE MEMORY MODE`**'
+    );
+
+    lines.push(
+        `🛑 ${[
+            "Save Memory Request of ***[",
+            pendingSaveMemory.memoryNumberEndRange !== null
+                ? `Messages: ${pendingSaveMemory.memoryNumber} to ${pendingSaveMemory.memoryNumberEndRange}`
+                : `Message: ${pendingSaveMemory.memoryNumber}`,
+            "]***",
+            "rejected because there is no eligible content.",
+        ]
+            .filter(Boolean)
+            .join(" ")}`,
+    );
+
+    return lines;
+}
+
+function isMetadataOnlyInput(
+    input: string
+): boolean {
 
     // Regexes unified at config.ts
     const CATEGORY_EXTRACT_REGEX = getCategoryExtractRegex();
@@ -707,7 +782,10 @@ function isMetadataOnlyInput(input: string): boolean {
 
     const normalized = input.trim();
 
-    if (EXIT_SAVE_MEMORY_REGEX.test(normalized)) {
+    if (
+        EXIT_SAVE_MEMORY_REGEX.test(normalized) ||
+        input.length <= 1                               // catches anything useless or a single . that was not scrubbed by cleanuserinput
+    ) {
         return true;
     }
 
@@ -725,4 +803,138 @@ function isMetadataOnlyInput(input: string): boolean {
             CATEGORY_EXTRACT_REGEX.test(segment) ||
             NAME_EXTRACT_REGEX.test(segment),
     );
+}
+
+export function isMetadataOnlyOutput(output: string): boolean {
+    const prefix = output.slice(0, 8);
+
+    if (
+        output.length <= 1 ||
+        output.trim() === "Content Retracted" ||
+        prefix.includes("🚨") ||
+        prefix.includes("📦") ||
+        prefix.includes("⏳") ||
+        prefix.includes("✅") ||
+        prefix.includes("❌") ||
+        output.toLowerCase().includes("save memory mode")
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Scans last assistant message in history for an incompleted save memory command.
+ */
+export async function scanHistoryForIncompleteSaveMemoryCommand(
+    userText: string,
+    messages: ChatMessage[],
+): Promise<string> {
+    // Find the last assistant message
+    let lastAssistantMessage: any = null;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if ((messages[i] as any).data.role === "assistant") {
+            lastAssistantMessage = messages[i];
+            break;
+        }
+    }
+
+    if (!lastAssistantMessage) {
+        return "";
+    }
+
+    // Extract text from that message only
+    const extractedLastAssistantText = (
+        lastAssistantMessage.data.content ?? []
+    )
+        .filter(
+            (content: any) =>
+                content.type === "text" && content.text,
+        )
+        .map((content: any) => content.text)
+        .join("\n");
+
+    // Only process if the LAST assistant message contains SAVE MEMORY MODE
+    if (!extractedLastAssistantText.includes("SAVE MEMORY MODE")) {
+        return "";
+    }
+
+    const knownMatch = extractedLastAssistantText.match(
+        /known\s*—\s*(.+)/i,
+    );
+
+    if (!knownMatch) {
+        return "";
+    }
+
+    const knownParameters = knownMatch[1];
+
+    const messageMatch = knownParameters.match(
+        /\bMessages?:\s*(\d+)(?:\s+to\s+(\d+))?\s*;/i,
+    );
+
+    const categoryMatch = knownParameters.match(
+        /\bCategory:\s*([^;]+)\s*;/i,
+    );
+
+    const nameMatch = knownParameters.match(
+        /\bName:\s*([^;]+)\s*;/i,
+    );
+
+    const memoryNumber = messageMatch?.[1] ?? null;
+    const memoryNumberEndRange = messageMatch?.[2] ?? null;
+    let category = categoryMatch?.[1]?.trim() ?? null;
+    let fileName = nameMatch?.[1]?.trim() ?? null;
+
+    // --------------------------------------------------------
+    // Split fields using the supported delimiters.
+    // --------------------------------------------------------
+
+    const segments: string[] = userText
+        .split(/[;,.]/)
+        .map((segment: string) => segment.trim())
+        .filter((segment: string) => segment.length > 0);
+
+    // --------------------------------------------------------
+    // Process each segment.
+    // --------------------------------------------------------
+
+    for (const segment of segments) {
+
+        // ----------------------------------------------------
+        // CATEGORY
+        // ----------------------------------------------------
+
+        const userLastCategory = extractCategory(segment);
+
+        if (userLastCategory !== null) {
+            category = userLastCategory;
+            continue;
+        }
+
+        // ----------------------------------------------------
+        // NAME
+        // ----------------------------------------------------
+
+        const userLastFileName = extractFileName(segment);
+
+        if (userLastFileName !== null) {
+            fileName = userLastFileName;
+            continue;
+        }
+    }
+
+    return [
+        memoryNumberEndRange !== null
+            ? `save memory messages ${memoryNumber} to ${memoryNumberEndRange};`
+            : memoryNumber !== null
+                ? `save memory ${memoryNumber};`
+                : "",
+        category !== null ? `category ${category};` : "",
+        fileName !== null ? `name ${fileName};` : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
 }

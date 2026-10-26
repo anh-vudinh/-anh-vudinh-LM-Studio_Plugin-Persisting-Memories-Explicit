@@ -1,5 +1,6 @@
 import type { LMStudioClient } from "@lmstudio/sdk";
 import type { Chat } from "@lmstudio/sdk";
+import { isMetadataOnlyOutput } from "./triggerSaveMemory";
 
 import {
     cleanAssistantResponse,
@@ -11,7 +12,6 @@ import {
 export interface MemoryAssociation {
     assistantMessageNumber: number;
     assistantResponse: string;
-
     rootInput: string;
     directInput: string;
 }
@@ -24,7 +24,7 @@ export async function associateAssistantResponse(
     client: LMStudioClient,
     history: Chat,
     assistantMessageNumber: number,
-): Promise<MemoryAssociation> {
+): Promise<MemoryAssociation | null> {
 
     if (!assistantMessageNumber) {
         throw new Error(
@@ -36,23 +36,18 @@ export async function associateAssistantResponse(
         history,
         assistantMessageNumber,
     );
+    
+    // Early exit if assistant text is just save memory mode or tom mode
+    if(isMetadataOnlyOutput(assistantMsg.content)) {
+        return null;
+    }
 
-    const cleanedAssistantResponse =
-        cleanAssistantResponse(assistantMsg.content);
+    const cleanedAssistantResponse = cleanAssistantResponse(assistantMsg.content);
 
     const candidates = getPriorUserMessages(
         history,
         assistantMessageNumber,
     );
-
-    // Intentionally disabled for more leeway
-    // This is the only user-message-related failure condition.
-    // if (candidates.length === 0) {
-    //     throw new Error(
-    //         `Message ${assistantMessageNumber} has no earlier user messages ` +
-    //         "that could serve as its root intention.",
-    //     );
-    // }
 
     let rootInput = "";
 

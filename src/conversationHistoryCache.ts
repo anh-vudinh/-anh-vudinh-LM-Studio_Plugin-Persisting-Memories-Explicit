@@ -12,6 +12,7 @@ export async function setCurrentConversationHistory(history: Chat): Promise<void
 }
 
 export async function getCurrentConversationHistory(): Promise<Chat> {
+
     if (!currentHistory) {
         throw new Error(
             "No active conversation history is available. " +

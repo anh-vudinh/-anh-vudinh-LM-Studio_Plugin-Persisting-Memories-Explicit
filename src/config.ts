@@ -2,22 +2,70 @@ import { createConfigSchematics } from "@lmstudio/sdk";
 import { normalizeJsonFileName } from "./promptPreprocessor"
 import type { PromptPreprocessorController } from "@lmstudio/sdk";
 
+// ============================================================
+// TOM Command States
+// ============================================================
+
+// Status:
+// Incomplete = pending TOM command not yet done
+// Null = no TOM command default state
+// Ready = valid and queued
+export type PendingTomCommandStatus = "incomplete" | "null" | "ready";
+
+let pendingTomCommand: PendingTomCommandStatus = "null";
+
+export function getPendingTomCommand(): PendingTomCommandStatus {
+    return pendingTomCommand;
+}
+
+export function setPendingTomCommand(
+    value: PendingTomCommandStatus,
+): void {
+    pendingTomCommand = value;
+}
+
+export const TOM_RANGES = {
+    first: { start: "A", end: "J" },
+    second: { start: "K", end: "Q" },
+    special: { start: "R", end: "Z" },
+} as const;
+
+const tomRangePatterns = Object.values(TOM_RANGES)
+    .map(({ start, end }) => {
+        return `${start.toLowerCase()}\\s*-?\\s*${end.toLowerCase()}`;
+    })
+    .join("|");
+
+// ============================================================
+// Config Schematics
+// ============================================================
+
 let currentMemorySeedsPool: readonly string[] = [];
 let currentMemorySeedsSelected: readonly string[] = [];
+let currentEngrainCompaction: string = "";
 
 export function createConfig(
     memorySeedsPool: readonly string[],
     memorySeedsSelected: readonly string[],
+    engrainCompaction: string,
 ) {
     return createConfigSchematics()
+        .field(
+            "enableToolsMode",
+            "boolean",
+            {
+                displayName: "🛠️ Switch to Tool Call Mode?",
+                hint: "Explicit Mode is the default. Turning this on allows the assistant to call these functions as tools.\n\n Still handled explicitly: \n - Message # appending \n - Table retractions \n - injected memory seed removal",
+            },
+            false,
+        )
         .field(
             "deleteMemorySeedsFile",
             "string",
             {
-                displayName: "Delete Memory",
-                subtitle: " *WARNING* This does not remove already injected memories. This is a final action to permanently delete a memory.",
+                displayName: "🗑️ Delete Memory",
                 warning: "This memory will be permanently deleted.",
-                hint: "Optional: <category/*.json> will delete the entire category.",
+                hint: "*WARNING* This does not remove already injected memories. This is a final action to permanently delete a memory. \n\n Optional: \n - <category>/*.json will delete the entire category",
                 placeholder: "Full name of the memory to delete. Copy/paste from available memories.",
             },
             "",
@@ -27,8 +75,8 @@ export function createConfig(
             "stringArray",
             {
                 displayName: "Available Memories",
-                subtitle: "DISPLAY ONLY: To create a new memory type to the assistant: save memory <message_#>; category <cat_name>; name <file_name>",
-                hint: "Copy/paste full names to Memories to Inject or Delete Memory fields.",
+                subtitle: "DISPLAY ONLY: Hover for Save Memory Commands.",
+                hint: "Copy/paste full names, including the .json into: \n\n - Memories to Inject \n - Delete Memory \n\n Chat Commands: \n\n Single Save: \n - save memory <message #>; category <category_name>; name <memory_name> \n\n Batch Save: \n - save memory <message #> to <message #>; category <category_name>; name <memory_name> ",
                 allowEmptyStrings: false,
             },
             [...memorySeedsPool],
@@ -37,9 +85,9 @@ export function createConfig(
             "memorySeedsSelected",
             "stringArray",
             {
-                displayName: "Memories to Inject",
+                displayName: "🧠 Memories to Inject",
                 subtitle: "Injects a memory into context. Copy/paste from available memories.",
-                warning: "Only the memories listed below will persist through turns.",
+                hint: "Only the memories listed will persist through turns. \n\n Optional: \n - <category>/*.json will inject the entire category",
                 allowEmptyStrings: false,
             },
             [...memorySeedsSelected]
@@ -48,22 +96,69 @@ export function createConfig(
             "summarizeMemorySeeds",
             "boolean",
             {
-                displayName: "Summarize All Memories Injected (not retroactive)",
-                subtitle: " Will force a summary of the memory file to be injected instead of the complete user/assistant exchange",
+                displayName: "📝 Summarize Memory Injected",
+                subtitle: " Forces a summary of the memory file to be injected rather than the raw user/assistant exchange",
                 hint: "This will lessen the context window consumed but may lose details or merge content compared to the full message exchange.",
             },
             false,
         )
         .field(
+            "tomNames",
+            "stringArray",
+            {
+                displayName: "📦 Table of Memories",
+                subtitle: "DISPLAY ONLY: Hover for TOM commands.",
+                hint:`IMPORTANT! \n Make sure you have read the tooltip for Initialize Table of Memories first before using this feature. \n\n Chat Commands: \n 1) fetch the memory table <table name> (TOM_LOOKUP) \n\n 2) recall a memory about <insert specifics> (FUZZY_RECALL) \n\n 3) fetch the memory <category>/<name>.json (DIRECT_LOOKUP) \n\n 4) fetch the memories <category>/*.json (FULL_CAT_FETCH) \n\n Shorthand: \n - tom${(TOM_RANGES.first.start + TOM_RANGES.first.end).toLowerCase()}, tom${(TOM_RANGES.second.start + TOM_RANGES.second.end).toLowerCase()}, tom${(TOM_RANGES.special.start + TOM_RANGES.special.end).toLowerCase()}`,
+                allowEmptyStrings: false,
+            },
+            [`TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}`, `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}`, `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}`]
+        )
+        .field(
             "initializeTOM",
             "boolean",
             {
-                displayName: "Initialize Table of Memories",
+                displayName: "⚙️ Initialize Table of Memories",
                 subtitle: " *WARNING* Do not leave enabled. Hover for details.",
-                warning: "Remember to off this after you've sent one message with it enabled.",
-                hint: "This is to create the table of memories files for earlier versions of this plugin. You're only required to run this enabled once along with a sent user message, or if you suspect that your TOM files/contents need repair, afterwards leave it off. It is expensive to run if you have many memories.",
+                hint: "This is to create the table of memories files for this plugin. Turn it on and send any user message. Turn it off after the message is sent. \n\n Leave it off by default unless your scenerio matches one condition: \n 1) You have never initialized the memory tables before. \n 2) You suspect that your TOM files/contents need repair. \n\n Leave this OFF once the table has been initialized It is expensive to run if you have many memories.",
             },
             false,
+        )
+        .field(
+            "retractOldToms",
+            "numeric",
+            {
+                displayName: "↩️ Retract TOM & TOC older than <N> turns",
+                hint: "Retroactively frees up your context window from being burdended by TOM & TOC tables that you've already consumed. Excludes the latest assistant turn. \n\n - Off = 0 \n\n - Max = 10 ",
+                int: true,
+                min: 0,
+                max: 10,
+            },
+            0
+        )
+        .field(
+            "deleteTocCollectionsAfterNthDays",
+            "numeric",
+            {
+                displayName: "🔥 Delete Compactions older than <N> days",
+                subtitle: "XPlugin Feature: Hover for details.",
+                hint: "REQUIRES the companion plugin Context Cleanup rev8+ from LM Studio or v4.0+ from Github. \n\n  All compactions older than the stated days will be deleted. \n\n This uses the TOC_Collections files to determine which compacitons to expire. This is for those who wish to not have to manually prune compactions. \n\n - Off = 0 \n\n - Max = 15 \n\n If a Compaction's contents are important to you, make it permanent using 🌱 Compaction ➠ Memory Seed.",
+                int: true,
+                min: 0,
+                max: 15,
+            },
+            0
+        )
+        .field(
+            "engrainCompaction",
+            "string",
+            {
+                displayName: "🌱 Compaction ➠ Memory Seed",
+                subtitle: "XPlugin Feature: Hover for details.",
+                warning: "REQUIRES the companion plugin Context Cleanup rev8+ enabled.",
+                hint: "REQUIRES the companion plugin Context Cleanup rev8+ from LM Studio or v4.0+ from Github. \n\n Converts a single compaction into a memory seed (one-time | Readme for specifics). \n\n <name_c#_p#.json> >> <category>/<name>.json \n\n Use >> specifically to separate the compaction seed from the memory seed. \n\n\n **Chat Commands:** \n - list compaction seeds \n - fetch compaction <name_c#_p#.json>",
+                placeholder: "name_c#_p#.json >> category/name.json",
+            },
+            engrainCompaction,
         )
         .build();
 }
@@ -71,14 +166,17 @@ export function createConfig(
 export let configSchematics = createConfig(
     currentMemorySeedsPool,
     currentMemorySeedsSelected,
+    currentEngrainCompaction,
 );
 
 export function setConfigSchematics({
     memorySeedsPool,
     memorySeedsSelected,
+    engrainCompaction,
 }: {
     memorySeedsPool?: readonly string[];
     memorySeedsSelected?: readonly string[];
+    engrainCompaction?: string;
 }): void {
     if (memorySeedsPool !== undefined) {
         currentMemorySeedsPool = memorySeedsPool;
@@ -88,9 +186,14 @@ export function setConfigSchematics({
         currentMemorySeedsSelected = memorySeedsSelected;
     }
 
+    if (engrainCompaction != undefined) {
+        currentEngrainCompaction = engrainCompaction;
+    }
+
     configSchematics = createConfig(
         currentMemorySeedsPool,
         currentMemorySeedsSelected,
+        currentEngrainCompaction,
     );
 }
 
@@ -151,16 +254,6 @@ export function resetPendingSaveMemory(): void {
     };
 }
 
-let previousSavingState: boolean | null = null;
-
-export function setPreviousTurnSavingState(value: boolean | null): void {
-    previousSavingState = value;
-}
-
-export function getPreviousTurnSavingState(): boolean | null {
-    return previousSavingState;
-}
-
 // ============================================================
 // Multiple Edit Coordinator
 // ============================================================
@@ -184,6 +277,12 @@ export function addConversationOperation(
 
 export function getConversationOperations(): ConversationOperation[] {
     return conversationOperations;
+}
+
+export function takeConversationOperations(): ConversationOperation[] {
+    const operations = [...conversationOperations];
+    conversationOperations = [];
+    return operations;
 }
 
 export function clearConversationOperations(): void {
@@ -235,15 +334,34 @@ const NAME_EXTRACT_REGEX =
 const EXIT_SAVE_MEMORY_REGEX =
     /\bexit\b\s+(?:save|sav|sve|sv|store|remember|persist)\b\s+(?:memory|mem|mm|mmry|memry|mry|mmy|memy)\b/i;
 
-const TABLE_OF_MEMORIES_REGEX =
-    /\b(?:table|tbl|tble|tabel)\s*(?:of\s*)?(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)|(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s*(?:table|tbl|tble|tabel)|\btom[_\s-]*(?:[a-j]\s*-?\s*[a-j]|[k-q]\s*-?\s*[k-q]|[r-z]\s*-?\s*[r-z])\b/i;
+const TABLE_OF_MEMORIES_REGEX = new RegExp(
+    String.raw`\b(?:table|tbl|tble|tabel|tables)\s*(?:of\s*)?(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)|(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s*(?:table|tbl|tble|tabel|tables)|\btom[_\s-]*(?:${tomRangePatterns})\b`,
+    "i",
+);
+
 // Second check to extract the alphabet range of tom file
 const MEMORY_RANGE_REGEX =
-    /\b(?:tom\s*[_-]?\s*|(?:table|tbl|tble|tabel)\s*(?:of\s*)?(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s*|(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s+(?:table|tbl|tble|tabel)\s*)([a-z]\s*-?\s*[a-z])\b/i;
+    /\b(?:tom\s*[_-]?\s*|(?:table|tbl|tble|tabel|tables)\s*(?:of\s*)?(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s*|(?:memories|memory|mem|mm|mmry|memry|mry|mmy|memy|mems)\s+(?:table|tbl|tble|tabel|tables)\s*)([a-z]\s*-?\s*[a-z])\b/i;
 
-// Both lookup and memory keywords must be present, they must be < 5 words apart
+// Both "lookup phrase" and "memory phrase" must be present, they may be up to 5 words apart
+// The ordering of the fetch phrase and memory phrase can be reversed
+// The model will be asked to interpret your query
 const FUZZY_SEARCH_MEMORY_REGEX =
-    /\b(?:(?:search|serch|srch|searching|find|fnd|look|lok|looking|fetch|fetsh|retrieve|retrive|retreive|recall|locate|lcoate|remember|rember|recollect|recollecting)\b(?:\W+\w+){0,5}\W+\b(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)\b|(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)\b(?:\W+\w+){0,5}\W+\b(?:search|serch|srch|searching|find|fnd|look|lok|looking|fetch|fetsh|retrieve|retrive|retreive|recall|locate|lcoate|remember|rember|recollect|recollecting)\b)/i;
+    /\b(?:(?:search|serch|srch|searching|find|fnd|look|lok|looking|fetch|fetsh|retrieve|retrive|retreive|recall|locate|lcoate|remember|rember|recollect|recollecting|get|grab|pull)\b(?:\W+\w+){0,5}\W+\b(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)\b|(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)\b(?:\W+\w+){0,5}\W+\b(?:search|serch|srch|searching|find|fnd|look|lok|looking|fetch|fetsh|retrieve|retrive|retreive|recall|locate|lcoate|remember|rember|recollect|recollecting|get|grab|pull)\b)/i;
+
+// Need a "fetch phrase" + "memory phrase" + "category/name.json".
+// The ordering of the fetch phrase and memory phrase can be reversed
+const DIRECT_FETCH_MEMORY_REGEX =
+    /\b(?:(?:fetch|fetsh|retrieve|retrive|retreive|get|grab|pull)\b(?:\W+\w+){0,3}\W+\b(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)?\b|(?:memory|memories|mem|mm|mmry|memry|mry|mmy|memy|mems)?\b(?:\W+\w+){0,3}\W+\b(?:fetch|fetsh|retrieve|retrive|retreive|get|grab|pull)\b)\W+(?:[^/\\*]+|\*)\/(?:[^/\\*]+|\*)\.json\b/i;
+
+const COMPACTION_SUMMARY_REGEX =
+    /\b(?:(?:fetch|fetsh|retrieve|retrive|retreive|get|grab|pull)\b(?:\W+\w+){0,3}\W+(?:compaction|compacton|compact|campaction|campactun|compactun|compacten|compactions|comp)?|(?:compaction|compacton|compact|campaction|campactun|compactun|compacten|compactions|compact)?\b(?:\W+\w+){0,3}\W+(?:fetch|fetsh|retrieve|retrive|retreive|get|grab|pull))\W+[\w -]+_c\d+_p\d+\.json\b/i;
+
+const COMPACTION_KEYWORD_REGEX =
+    /\b(?:fetch|fetsh|retrieve|retrive|retreive|get|grab|pull|compactions|compaction|compacton|campaction|campactun|compactun|compacten|compact|comp)\b/ig;
+
+const LIST_COMPACTION_SEEDS_REGEX =
+    /\blist\b(?:\W+\w+){0,3}\W+\b(?:compaction|compacton|compact|campaction|campactun|compactun|compacten|compactions|compacts|campactions|campactuns|compactuns|compactens|comp)?s?\b\W+\bseeds?\b/i;
 
 export function getSaveMemoryRegex(): RegExp {
     return SAVE_MEMORY_REGEX;
@@ -281,23 +399,87 @@ export function getFuzzySearchRegex(): RegExp {
     return FUZZY_SEARCH_MEMORY_REGEX;
 }
 
-// ============================================================
-// TOM Command States
-// ============================================================
-// Status:
-// Incomplete = pending TOM command not yet done
-// Null = no TOM command default state
-// Ready = valid and queued
-export type PendingTomCommandStatus = "incomplete" | "null" | "ready";
-
-let pendingTomCommand: PendingTomCommandStatus = "null";
-
-export function getPendingTomCommand(): PendingTomCommandStatus {
-    return pendingTomCommand;
+export function getDirectFetchRegex(): RegExp {
+    return DIRECT_FETCH_MEMORY_REGEX;
 }
 
-export function setPendingTomCommand(
-    value: PendingTomCommandStatus,
-): void {
-    pendingTomCommand = value;
+export function getCompactionSummaryRegex(): RegExp {
+    return COMPACTION_SUMMARY_REGEX;
 }
+
+export function getCompactionKeywordRegex(): RegExp {
+    return COMPACTION_KEYWORD_REGEX;
+}
+
+export function getListCompactionSeedsRegex(): RegExp {
+    return LIST_COMPACTION_SEEDS_REGEX;
+}
+
+// ============================================================
+// LM STUDIO ROOT DIRECTORY OVERRIDE
+// ============================================================
+
+let validatedLMSRootDirectory = "";
+let validatedConversationRootDirectory = "";
+let validatedMemoriesRootDirectory = "";
+
+export function setValidatedLMSRootDirectory(value: string): void {
+  validatedLMSRootDirectory = value;
+}
+
+export function getValidatedLMSRootDirectory(): string {
+  return validatedLMSRootDirectory;
+}
+
+export function setValidatedConversationRootDirectory(value: string): void {
+  validatedConversationRootDirectory = value;
+}
+
+export function getValidatedConversationRootDirectory(): string {
+  return validatedConversationRootDirectory;
+}
+
+export function setValidatedMemoriesRootDirectory(value: string): void {
+  validatedMemoriesRootDirectory = value;
+}
+
+export function getValidatedMemoriesRootDirectory(): string {
+  return validatedMemoriesRootDirectory;
+}
+
+// ============================================================
+// TOM Last Retracted Index
+// ============================================================
+
+let lastKnownIndexOfRetractedToms: number | null = null;
+
+export function setLastKnownIndexOfRetractedToms(value: number | null): void {
+  lastKnownIndexOfRetractedToms = value;
+}
+
+export function getLastKnownIndexOfRetractedToms(): number | null {
+  return lastKnownIndexOfRetractedToms;
+}
+
+// ============================================================
+// Compaction
+// ============================================================
+
+let contextCleanupPluginInUse: boolean | null = null;
+// let contextCleanupConversationName = "";
+
+export function setContextCleanupPluginInUse(value: boolean | null): void {
+  contextCleanupPluginInUse = value;
+}
+
+export function getContextCleanupPluginInUse(): boolean | null {
+  return contextCleanupPluginInUse;
+}
+
+// export function setContextCleanupConversationName(value: string): void {
+//   contextCleanupConversationName = value;
+// }
+
+// export function getContextCleanupConversationName(): string {
+//   return contextCleanupConversationName;
+// }

@@ -1,9 +1,9 @@
+import { updateTableOfCompactionsIncrementally, updateTocCollectionsIncrementally } from "./tableOfCompactions";
 import { getMemorySeedsPool } from "./memorySession";
+import { resetPendingSaveMemory, setConfigSchematics } from "./config";
+import { updateTableOfMemoriesIncrementally } from "./tableOfMemories";
 import fs from "node:fs/promises";
 import path from "node:path";
-
-import { setConfigSchematics } from "./config";
-import { updateTableOfMemoriesIncrementally } from "./tableOfMemories";
 
 export interface MemorySeed {
     date: string;
@@ -25,7 +25,6 @@ export class MemoryStore {
 
     /**
      * Configure where Memory Seeds are stored.
-     *
      * The directory is supplied by LM Studio's plugin working directory.
      */
     async setRootDirectory(rootDirectory: string): Promise<void> {
@@ -78,47 +77,6 @@ export class MemoryStore {
         }
 
         return this.memoriesDirectory;
-    }
-
-    /**
-     * Create a memory category.
-     *
-     * Example:
-     *   createCategory("Rust Game")
-     *
-     * Creates:
-     *   memories/Rust Game/
-     */
-    async createCategory(category: string): Promise<void> {
-        const directory = await this.getMemoriesDirectory();
-        const safeCategory = sanitizePathPart(category);
-
-        if (!safeCategory) {
-            throw new Error("Memory category cannot be empty.");
-        }
-
-        await fs.mkdir(
-            path.join(directory, safeCategory),
-            {
-                recursive: true,
-            },
-        );
-    }
-
-    /**
-     * List all memory categories.
-     */
-    async listCategories(): Promise<string[]> {
-        const directory = await this.initializeAndGetDirectory();
-
-        const entries = await fs.readdir(directory, {
-            withFileTypes: true,
-        });
-
-        return entries
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => entry.name)
-            .sort((a, b) => a.localeCompare(b));
     }
 
     /**
@@ -211,8 +169,7 @@ export class MemoryStore {
                 "utf-8",
             );
 
-            const memorySeedName =
-                `${safeCategory}/${safeName}.json`;
+            const memorySeedName = `${safeCategory}/${safeName}.json`;
 
             await updateTableOfMemoriesIncrementally(
                 directory,
@@ -221,8 +178,7 @@ export class MemoryStore {
                 [seed],
             );
 
-            const memorySeedsPool =
-                getMemorySeedsPool();
+            const memorySeedsPool = getMemorySeedsPool();
 
             if (!memorySeedsPool.includes(memorySeedName)) {
                 setConfigSchematics({
@@ -232,7 +188,7 @@ export class MemoryStore {
                     ],
                 });
             }
-
+            resetPendingSaveMemory();
             return true;
         } catch {
             return false;
@@ -244,6 +200,8 @@ export class MemoryStore {
         name: string,
         seeds: MemorySeed[],
         saveMemoryNumber: number,
+        callerIsCompaction?: boolean,
+        matchingFilesAndNewAdditions?: string[],
     ): Promise<boolean> {
         const directory = await this.initializeAndGetDirectory();
 
@@ -263,32 +221,46 @@ export class MemoryStore {
         }
 
         if (!seeds.length) {
+            console.warn("[SAVE SKIPPED] No seeds", { name: safeName });
             return false;
         }
 
         for (const seed of seeds) {
-            if (!seed.root_input.trim()) {
-                return false;
+            for (let index = 0; index < seeds.length; index++) {
+                const seed = seeds[index];
+
+                if (!seed.root_input.trim()) {
+                    console.warn("[SAVE SKIPPED] Empty root_input", {
+                        name: safeName,
+                        index,
+                        root_input: seed.root_input,
+                    });
+                    return false;
+                }
             }
 
             if (!seed.direct_input.trim()) {
+                // console.warn("[SAVE SKIPPED] Empty direct_input", {
+                //     name: safeName,
+                // });
                 return false;
             }
 
             if (!seed.output.trim()) {
+                // console.warn("[SAVE SKIPPED] Empty output", {
+                //     name: safeName,
+                // });
                 return false;
             }
         }
         
         try {
-            const categoryPath = path.join(
-                directory,
-                safeCategory,
-            );
-
-            await fs.mkdir(categoryPath, {
-                recursive: true,
-            });
+            const categoryPath = callerIsCompaction
+                ? path.join(directory, safeCategory, "TOC_Seeds")
+                : path.join(directory, safeCategory);
+                        await fs.mkdir(categoryPath, {
+                            recursive: true,
+                        });
 
             const filePath = path.join(
                 categoryPath,
@@ -327,6 +299,28 @@ export class MemoryStore {
                 "utf-8",
             );
 
+            // console.log("[COMPACTION FILE WRITTEN]", {
+            //     name: safeName,
+            //     filePath,
+            //     seedCount: existingSeeds.length,
+            // });
+
+            if (callerIsCompaction) {
+                await updateTableOfCompactionsIncrementally(
+                    directory,
+                    safeCategory,
+                    safeName,
+                    seeds,
+                    matchingFilesAndNewAdditions,
+                );
+
+                await updateTocCollectionsIncrementally(
+                    safeName,
+                );
+
+                return true;
+            }
+
             const memorySeedName =
                 `${safeCategory}/${safeName}.json`;
 
@@ -338,8 +332,7 @@ export class MemoryStore {
                 seeds,
             );
 
-            const memorySeedsPool =
-                getMemorySeedsPool();
+            const memorySeedsPool = getMemorySeedsPool();
 
             if (!memorySeedsPool.includes(memorySeedName)) {
                 setConfigSchematics({
@@ -353,198 +346,6 @@ export class MemoryStore {
             return true;
         } catch {
             return false;
-        }
-    }
-
-    /**
-     * Load one Memory Seed.
-     */
-    async loadSeed(
-        category: string,
-        name: string,
-    ): Promise<MemorySeed> {
-        const directory = await this.getMemoriesDirectory();
-
-        const safeCategory = sanitizePathPart(category);
-        const safeName = sanitizeFilename(name);
-
-        if (!safeCategory || !safeName) {
-            throw new Error("Invalid Memory Seed path.");
-        }
-
-        const filePath = path.join(
-            directory,
-            safeCategory,
-            `${safeName}.json`,
-        );
-
-        const contents = await fs.readFile(
-            filePath,
-            "utf-8",
-        );
-
-        return parseMemorySeed(contents, filePath);
-    }
-
-    /**
-     * List all Memory Seeds inside a category.
-     */
-    async listSeeds(
-        category: string,
-    ): Promise<MemorySeedInfo[]> {
-        const directory = await this.getMemoriesDirectory();
-
-        const safeCategory = sanitizePathPart(category);
-
-        if (!safeCategory) {
-            throw new Error("Memory category cannot be empty.");
-        }
-
-        const categoryPath = path.join(
-            directory,
-            safeCategory,
-        );
-
-        try {
-            const entries = await fs.readdir(
-                categoryPath,
-                {
-                    withFileTypes: true,
-                },
-            );
-
-            const seeds: MemorySeedInfo[] = [];
-
-            for (const entry of entries) {
-                if (
-                    !entry.isFile() ||
-                    !entry.name
-                        .toLowerCase()
-                        .endsWith(".json")
-                ) {
-                    continue;
-                }
-
-                const filePath = path.join(
-                    categoryPath,
-                    entry.name,
-                );
-
-                const contents = await fs.readFile(
-                    filePath,
-                    "utf-8",
-                );
-
-                const seed = parseMemorySeed(
-                    contents,
-                    filePath,
-                );
-
-                seeds.push({
-                    name: path.basename(
-                        entry.name,
-                        ".json",
-                    ),
-                    category: safeCategory,
-                    filename: entry.name,
-                    seed,
-                });
-            }
-
-            return seeds.sort((a, b) =>
-                a.name.localeCompare(b.name),
-            );
-        } catch (error) {
-            if (
-                isNodeError(error) &&
-                error.code === "ENOENT"
-            ) {
-                return [];
-            }
-
-            throw error;
-        }
-    }
-
-    /**
-     * Load every Memory Seed in a category.
-     */
-    async loadCategory(
-        category: string,
-    ): Promise<MemorySeedInfo[]> {
-        return this.listSeeds(category);
-    }
-
-    /**
-     * Check whether a category exists.
-     */
-    async categoryExists(
-        category: string,
-    ): Promise<boolean> {
-        const directory = await this.getMemoriesDirectory();
-
-        const safeCategory = sanitizePathPart(category);
-
-        if (!safeCategory) {
-            return false;
-        }
-
-        try {
-            const stats = await fs.stat(
-                path.join(
-                    directory,
-                    safeCategory,
-                ),
-            );
-
-            return stats.isDirectory();
-        } catch (error) {
-            if (
-                isNodeError(error) &&
-                error.code === "ENOENT"
-            ) {
-                return false;
-            }
-
-            throw error;
-        }
-    }
-
-    /**
-     * Check whether a Memory Seed exists.
-     */
-    async seedExists(
-        category: string,
-        name: string,
-    ): Promise<boolean> {
-        const directory = await this.getMemoriesDirectory();
-
-        const safeCategory = sanitizePathPart(category);
-        const safeName = sanitizeFilename(name);
-
-        if (!safeCategory || !safeName) {
-            return false;
-        }
-
-        try {
-            const stats = await fs.stat(
-                path.join(
-                    directory,
-                    safeCategory,
-                    `${safeName}.json`,
-                ),
-            );
-
-            return stats.isFile();
-        } catch (error) {
-            if (
-                isNodeError(error) &&
-                error.code === "ENOENT"
-            ) {
-                return false;
-            }
-
-            throw error;
         }
     }
 
@@ -583,65 +384,6 @@ function sanitizeFilename(value: string): string {
         .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
         .replace(/\.+$/g, "")
         .trim();
-}
-
-/**
- * Validate the contents of a JSON Memory Seed file.
- */
-function parseMemorySeed(
-    contents: string,
-    filePath: string,
-): MemorySeed {
-    let parsed: unknown;
-
-    try {
-        parsed = JSON.parse(contents);
-    } catch {
-        throw new Error(
-            `Invalid JSON in Memory Seed: ${filePath}`,
-        );
-    }
-
-    if (
-        typeof parsed !== "object" ||
-        parsed === null
-    ) {
-        throw new Error(
-            `Invalid Memory Seed format: ${filePath}`,
-        );
-    }
-
-    const value = parsed as Record<string, unknown>;
-
-    if (
-        typeof value.date !== "string" ||
-        typeof value.root_input !== "string" ||
-        typeof value.direct_input !== "string" ||
-        typeof value.output !== "string"
-    ) {
-        throw new Error(
-            `Memory Seed is missing required fields: ${filePath}`,
-        );
-    }
-
-    return {
-        date: value.date,
-        root_input: value.root_input,
-        direct_input: value.direct_input,
-        output: value.output,
-    };
-}
-
-/**
- * Type guard for Node filesystem errors.
- */
-function isNodeError(
-    error: unknown,
-): error is NodeJS.ErrnoException {
-    return (
-        error instanceof Error &&
-        "code" in error
-    );
 }
 
 export const memoryStore = new MemoryStore();

@@ -145,10 +145,15 @@ export function getAssistantResponse(
             continue;
         }
 
+        const cleanedContent = message.getText().replace(
+            /^[\s\S]*?__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[A-Za-z0-9]+__/i,
+            "",
+        )
+
         return {
             messageNumber,
             arrayIndex,
-            content: message.getText(),
+            content: cleanedContent,
             raw: message,
         };
     }
@@ -159,10 +164,18 @@ export function getAssistantResponse(
     );
 }
 
+// Now has a fall back because isAssistantMessage is not a function for the messages we stored in the copy file
+// The first route checks if this is a valid function at runtime, if it is, it runs the original function 
+// from lmstudio, if it isn't it falls back to the second type of check for the copy file.
 export function isEligibleAssistantMessage(
     message: ChatMessage,
 ): boolean {
-    if (!message.isAssistantMessage()) {
+    const isAssistant =
+        typeof message.isAssistantMessage === "function"
+            ? message.isAssistantMessage()
+            : (message as any).data?.role === "assistant";
+
+    if (!isAssistant) {
         return false;
     }
 
@@ -172,6 +185,7 @@ export function isEligibleAssistantMessage(
         (item: any) => item.type === "toolCallRequest",
     );
 }
+
 
 export function getAssistantOutput(message: ChatMessage): string {
     const data = (message as any).data;
@@ -355,11 +369,11 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /Formatting Instruction:.*?:End of Instruction.?/g,
+            /\[BEGINNING OF MEMORIES\][\s\S]*?\[END OF MEMORIES\]/g,
             "",
         )
         .replace(
-            /\[BEGINNING OF MEMORIES\][\s\S]*?\[END OF MEMORIES\]/g,
+            /Ignore this ICID tag\./g,
             "",
         )
         .replace(
@@ -367,11 +381,11 @@ export function cleanUserInput(text: string): string {
             "",
         )
         .replace(
-            /Ignore this ICID tag\./,
+            /ROLEPLAY:[\s\S]*?\[User Last Message\]/g,
             "",
         )
         .replace(
-            /System:[\s\S]*?'pending save memory\.\.\.'/g,
+            /ROLEPLAY:[\s\S]*?\.\.\.'/g,
             "",
         )
         .trim();

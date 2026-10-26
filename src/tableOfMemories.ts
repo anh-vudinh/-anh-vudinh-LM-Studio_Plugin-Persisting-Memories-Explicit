@@ -2,8 +2,9 @@ import { acquireLock, releaseLock } from "./acquireLockFile";
 import { memoryStore } from "./memoryStore";
 import type { MemorySeed } from "./memoryStore";
 import { join } from "node:path";
-
 import { editAssistantResponse } from "./triggerSaveMemory";
+import { getMemorySeedsPool } from "./memorySession";
+import { promptProcessorConstructMemoriesToInject } from "./promptPreprocessor";
 import path from "node:path";
 import fs from "node:fs/promises";
 
@@ -15,7 +16,11 @@ import {
     getMemoryRangeRegex, 
     addConversationOperation, 
     setPendingTomCommand, 
-    getPendingTomCommand
+    getPendingTomCommand,
+    TOM_RANGES,
+    getDirectFetchRegex,
+    setLastKnownIndexOfRetractedToms,
+    getLastKnownIndexOfRetractedToms
 } from "./config";
 
 import {
@@ -25,15 +30,14 @@ import {
     stat,
 } from "node:fs/promises";
 
-
-interface TableOfMemoriesEntity {
+export interface TableOfMemoriesEntity {
     fileSizeKB: number;
     fileName: string;
     keywords: string;
     summary: string;
 }
 
-interface MemoryTurn {
+export interface MemoryTurn {
     direct_input: string;
     output: string;
 }
@@ -57,6 +61,346 @@ export async function tableOfMemoriesMain(): Promise<void> {
 }
 
 //-------------------------------------------------
+// UserText Interceptor To Determine TOM Regex Commands
+//-------------------------------------------------
+
+// First layer filter that will try to determine if the userText
+// is a TOM fuzzy search or TOM table lookup command.
+export async function processMessageForTom(
+    userText: string,
+    retractOldToms: number,
+    enableToolsMode: boolean,
+): Promise<void>{
+
+    const TABLE_OF_MEMORIES_REGEX = getTableOfMemoriesRegex();
+
+    const FUZZY_SEARCH_MEMORY_REGEX = getFuzzySearchRegex();
+
+    const DIRECT_FETCH_MEMORY_REGEX = getDirectFetchRegex();
+
+    const tomMatch = userText.match(TABLE_OF_MEMORIES_REGEX);
+
+    const pendingTomCommand = getPendingTomCommand();
+
+    let constructedTableString = "";
+
+    const tomDirectFetchMatch = userText.match(DIRECT_FETCH_MEMORY_REGEX);
+
+    if (retractOldToms > 0) {
+
+        addConversationOperation(
+            "tryRetractOldTomsFunction",
+            {
+                retractOldToms,
+                enableToolsMode,
+            },
+        );
+    }
+
+    // Early exit after the retractOldToms operation
+    if (enableToolsMode) return;
+
+    // DIRECT MEMORY FETCH USER PROVIDED .JSON NAME
+    if (tomDirectFetchMatch) {
+        const memorySeedsPool = getMemorySeedsPool();
+        const requestedSeeds = new Set<string>();
+
+        for (const seed of memorySeedsPool) {
+            // Accept only exact seed paths mentioned in the user text.
+            if (userText.includes(seed)) {
+                requestedSeeds.add(seed);
+            }
+
+            // Expand category/*.json only for known categories.
+            const slashIndex = seed.indexOf("/");
+            if (slashIndex === -1) continue;
+
+            const category = seed.slice(0, slashIndex);
+            const wildcard = `${category}/*.json`;
+
+            if (userText.includes(wildcard)) {
+                requestedSeeds.add(seed);
+            }
+        }
+
+        const validatedSeedsToFetch = [...requestedSeeds];
+
+        // console.log("Validated seeds:", validatedSeedsToFetch);
+
+        if (validatedSeedsToFetch.length === 0) {
+
+            constructedTableString = constructNonExisitingMemoryString([...memorySeedsPool]);
+
+            addConversationOperation(
+                "tryAppendTableOfMemoriesContentFunction",
+                {
+                    constructedTableString,
+                },
+            );
+
+            setPendingTomCommand("ready");
+            return;
+        }
+
+        const memoriesPackage = await promptProcessorConstructMemoriesToInject(
+            validatedSeedsToFetch,
+            false,                      // Do not summarize seeds
+        );
+
+        constructedTableString = formatMemoryPackage(memoriesPackage);
+
+        // Fetch only validatedSeedsToFetch.
+        if (constructedTableString !== "") {
+            // Inject the constructedTableString into the newest assistant message.
+            addConversationOperation(
+                "tryAppendTableOfMemoriesContentFunction",
+                {
+                    constructedTableString,
+                },
+            );
+
+            setPendingTomCommand("ready");
+        }
+        return;
+    }
+
+    // TABLE LOOK UP USER PROVIDED TOMAJ then FUZZY MEMORY SEARCH IF IT WAS NOT A TABLE LOOK UP
+    // First layer check for direct table of memories lookup.
+    // This captures a broad userText with keywords for 'fetch' & 'table' & 'memory|memories' || 'tom'
+    if (
+        tomMatch ||
+        pendingTomCommand === "incomplete"
+    ) {
+        const match = extractMemoryRange(userText);
+
+        // Second layer check to see if those three same values exist AND there is variation of `TOM_A-J`, `TOM_K-Q`, `TOM_R-Z`
+        // which is the expected table names ai, a i, a_i validate too as long as they've cleared the first layer check
+        if (match) {
+
+            const tableName = `TOM_${match.toUpperCase()}`;
+
+            const returnPackage = await tableOfMemoriesDirectLookup(tableName);
+            
+            constructedTableString = formatAsTableString(returnPackage);
+            
+            setPendingTomCommand("ready");
+        } else {
+            // Build a string to append to ask the user which table they like to look up
+            // giving them their full options.
+            // Set ourselves in a global state to wait for that answer.
+
+            constructedTableString =
+                "Specify exactly which Table of Memories you wish to retrieve: " +
+                "`TOM_" + TOM_RANGES.first.start + "-" + TOM_RANGES.first.end + "`, " +
+                "`TOM_" + TOM_RANGES.second.start + "-" + TOM_RANGES.second.end + "`, " +
+                "`TOM_" + TOM_RANGES.special.start + "-" + TOM_RANGES.special.end + "`";
+
+            setPendingTomCommand("incomplete");
+        }
+
+    } else {
+        // FUZZY SEARCH Regex matched first layer check, send it through to 
+        // the model to validate and extract the search query.
+        const fuzzySearchMatch = userText.match(FUZZY_SEARCH_MEMORY_REGEX);
+
+        if (fuzzySearchMatch) {
+            const extractedQuery = await askModelToValidateFuzzySearchRegexAndExtractQuery(userText);
+
+            if (extractedQuery !== "") {
+                const returnPackage = await tableOfMemoriesSummariesLookup(extractedQuery);
+
+                if (returnPackage !== "") {
+                    constructedTableString = constructTOMSummariesLookupTable(returnPackage);          
+                }
+
+                if (returnPackage === "") {
+                    constructedTableString = constructTomEmptyReturnPackage(extractedQuery);
+                }
+            }
+        }
+    }
+
+    if (constructedTableString !== "") {
+        // Inject the constructedTableString into the newest assistant message.
+        addConversationOperation(
+            "tryAppendTableOfMemoriesContentFunction",
+            {
+                constructedTableString,
+            },
+        );
+
+        setPendingTomCommand("ready");
+    }
+}
+
+export function formatMemoryPackage(
+    packageText: string
+): string {
+    const memoryBlockRegex =
+        /\[BEGIN ([^\]]+\.json)\]([\s\S]*?)\[END \1\]/gi;
+
+    const formattedMemories: string[] = [];
+    let blockMatch: RegExpExecArray | null;
+
+    while ((blockMatch = memoryBlockRegex.exec(packageText)) !== null) {
+        const source = blockMatch[1].trim();
+        const payload = blockMatch[2].trim();
+
+        const dateMatch = payload.match(
+            /DATE:\s*(.*?)(?=\s+TOPIC_\d+:|$)/i,
+        );
+        const date = dateMatch?.[1]?.trim() ?? "Date unavailable";
+
+        const topicRegex =
+            /TOPIC_(\d+):\s*([\s\S]*?)(?=\s+TOPIC_\d+:|$)/gi;
+
+        const rows: string[] = [];
+        let topicMatch: RegExpExecArray | null;
+
+        while ((topicMatch = topicRegex.exec(payload)) !== null) {
+            const topicNumber = topicMatch[1];
+            const section = topicMatch[2].trim();
+
+            const userMatch = /\bUSER\s*:/i.exec(section);
+            const assistantMatch = /\bASSISTANT\s*:/i.exec(section);
+
+            const firstMessageIndex = [
+                userMatch?.index,
+                assistantMatch?.index,
+            ]
+                .filter((index): index is number => index !== undefined)
+                .reduce(
+                    (minimum, index) => Math.min(minimum, index),
+                    section.length,
+                );
+
+            const topicText = section
+                .slice(0, firstMessageIndex)
+                .trim();
+
+            let userText = "";
+            if (userMatch) {
+                const userStart = userMatch.index + userMatch[0].length;
+                const userEnd =
+                    assistantMatch && assistantMatch.index > userMatch.index
+                        ? assistantMatch.index
+                        : section.length;
+
+                userText = section.slice(userStart, userEnd).trim();
+            }
+
+            let assistantText = "";
+            if (assistantMatch) {
+                const assistantStart =
+                    assistantMatch.index + assistantMatch[0].length;
+
+                assistantText = section.slice(assistantStart).trim();
+            }
+
+            rows.push(
+                `| **TOPIC ${topicNumber}** | ${escapeCell(topicText)} |`,
+                `| **USER** | ${escapeCell(userText)} |`,
+                `| **ASSISTANT** | ${escapeCell(assistantText)} |`,
+            );
+        }
+
+        formattedMemories.push(
+            [
+                '📦 **`Memory Package`**',
+                `### ${source}`,
+                `**DATE:** ${escapeCell(date)}`,
+                "",
+                "| Field | Content |",
+                "|---|---|",
+                ...rows,
+            ].join("\n"),
+        );
+    }
+
+    return formattedMemories.join("\n\n");
+
+    function escapeCell(value: string): string {
+        return value
+            .replace(/\|/g, "\\|")
+            .replace(/\r?\n/g, "<br>");
+    }
+}
+
+
+// Second filter to validate a search command and extract 
+// the search query which will be fed to compare to keywords and summaries
+// Low cost hybrid approach rather than try and predict every formatting a user may 
+// weave their actual query in during a save command.
+async function askModelToValidateFuzzySearchRegexAndExtractQuery(
+    userText: string,
+):Promise<string> {
+    const client = getController().client;
+    const model = await client.llm.model();
+    
+    const prompt = `
+        The user has provided a text which may be a request or command to recall, find, or any synonym of 'search' for a MEMORY. 
+
+        Extract the subjects of what they are trying to search for. Do not include the search command within your returned string of the search query you have extracted.
+
+        If this was not a valid search query return an empty string.
+
+        [BEGINNING OF USER TEXT]: 
+        ${userText}
+        [END OF USER TEXT]
+        `.trim();
+
+    const result = await model.respond(
+        prompt,
+        {
+            temperature: 0,
+        },
+    );
+
+    const cleanedText = result.content
+        .replace(
+            /^[\s\S]*?__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[A-Za-z0-9]+__/i,
+            "",
+        )
+        .replace(/^[\s\S]*?```(?:json)?\s*/i, "")
+        .replace(/\s*```[\s\S]*$/i, "")
+        .trim();
+
+    return cleanedText;
+}
+
+// Extracts the TOM suffix identifier for TOM file of interest
+function extractMemoryRange(input: string): string | null {
+    
+    const MEMORY_RANGE_REGEX = getMemoryRangeRegex();
+    
+    const match = input.match(MEMORY_RANGE_REGEX);
+    if (!match) return null;
+
+    const letters = match[1].replace(/[\s-]/g, "").toLowerCase();
+
+    if (!/^[a-z]{2}$/.test(letters)) return null;
+
+    const [start, end] = letters;
+
+    const first = TOM_RANGES.first;
+    if (new RegExp(`[${first.start}-${first.end}]`, "i").test(start) &&
+        new RegExp(`[${first.start}-${first.end}]`, "i").test(end))
+        return `${first.start}-${first.end}`.toLowerCase();
+
+    const second = TOM_RANGES.second;
+    if (new RegExp(`[${second.start}-${second.end}]`, "i").test(start) &&
+        new RegExp(`[${second.start}-${second.end}]`, "i").test(end))
+        return `${second.start}-${second.end}`.toLowerCase();
+
+    const special = TOM_RANGES.special;
+    if (new RegExp(`[${special.start}-${special.end}]`, "i").test(start) &&
+        new RegExp(`[${special.start}-${special.end}]`, "i").test(end))
+        return `${special.start}-${special.end}`.toLowerCase();
+
+    return null;
+}
+
+//-------------------------------------------------
 // TABLE OF MEMORIES FILE MAINTANENCE
 //-------------------------------------------------
 
@@ -65,9 +409,9 @@ async function createTableOfMemories(
     memoriesDirectory: string,
 ): Promise<void> {
     const tableNames = [
-        "TOM_A-J.json",
-        "TOM_K-Q.json",
-        "TOM_R-Z.json", // Special characters will live in R-Z.
+        `TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}.json`,
+        `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}.json`,
+        `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}.json`, // Special characters will live in R-Z.
     ];
 
     for (const tableName of tableNames) {
@@ -80,17 +424,22 @@ async function createTableOfMemories(
                 flag: "wx",
             });
 
-            console.log(`Created table of memories: ${filePath}`);
+            console.log(
+                `[⚙️ Initialize Table of Memories] ${tableName} created.`,
+            );
         } catch (error) {
             const fsError = error as NodeJS.ErrnoException;
 
             if (fsError.code === "EEXIST") {
                 // File already exists; leave it untouched.
+                console.log(
+                    `[⚙️ Initialize Table of Memories] ${tableName} already exist.`,
+                );
                 continue;
             }
 
             console.error(
-                `Failed to create table of memories "${filePath}":`,
+                `[⚙️ Initialize Table of Memories] Failed to create table of memories "${filePath}":`,
                 error,
             );
         }
@@ -127,6 +476,10 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                 continue;
             }
 
+            if (category.name === "compactions") {
+                continue;
+            }
+
             const categoryPath = path.join(
                 memoriesDirectory,
                 category.name,
@@ -140,20 +493,22 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
             const firstCharacter = category.name[0].toUpperCase();
 
             const tomFileName =
-                firstCharacter >= "A" && firstCharacter <= "J"
-                    ? "TOM_A-J.json"
-                    : firstCharacter >= "K" && firstCharacter <= "Q"
-                        ? "TOM_K-Q.json"
-                        : "TOM_R-Z.json";
+                firstCharacter >= `${TOM_RANGES.first.start}` && firstCharacter <= `${TOM_RANGES.first.end}`
+                    ? `TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}.json`
+                    : firstCharacter >= `${TOM_RANGES.second.start}` && firstCharacter <= `${TOM_RANGES.second.end}`
+                        ? `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}.json`
+                        : `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}.json`;
 
             const tomFilePath = path.join(
                 memoriesDirectory,
                 tomFileName,
             );
 
-            const lockFile = `${tomFilePath}.lock`;
+            let lockOwnerName: string | undefined;
 
-            await acquireLock(lockFile, functionName);
+            const lockFile = `${tomFilePath}.lock`;
+            
+            lockOwnerName = await acquireLock(lockFile, functionName);
 
             try {
                 for (const file of files) {
@@ -164,7 +519,11 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                         continue;
                     }
 
-                    const fileName = `${category.name}/${file.name}`;
+                    const fileName = [
+                        category.name,
+                        file.name,
+                    ].join("/");
+
                     const memoryFilePath = path.join(
                         categoryPath,
                         file.name,
@@ -200,6 +559,9 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                             existingIndex !== -1 &&
                             tableOfMemories[existingIndex].fileSizeKB === fileSizeKB
                         ) {
+                            console.log(
+                                `[⚙️ Initialize Table of Memories] ${fileName} skipped [Reason: no changes].`,
+                            );
                             continue;
                         }
 
@@ -221,8 +583,14 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                         };
 
                         if (existingIndex !== -1) {
+                            console.log(
+                                `[⚙️ Initialize Table of Memories] ${fileName} updated.`,
+                            );
                             tableOfMemories[existingIndex] = entity;
                         } else {
+                            console.log(
+                                `[⚙️ Initialize Table of Memories] ${fileName} initialized.`,
+                            );
                             tableOfMemories.push(entity);
                         }
 
@@ -239,9 +607,15 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                     }
                 }
             } finally {
-                releaseLock(lockFile, functionName);
+                if (lockOwnerName !== undefined) {
+                    await releaseLock(lockFile, lockOwnerName);
+                    lockOwnerName = undefined;
+                }
             }
         }
+        console.warn(
+            `[⚙️ Initialize Table of Memories] TABLES HAVE BEEN INITIALIZED/REFRESHED REMEMBER TO TURN THIS FEATURE OFF.`,
+        );
     }
 }
 
@@ -260,6 +634,10 @@ async function modelCallToCraftMemorySummaryAndKeywords(
         In addition to the summary, identify significant keywords which are relevant to this user and assistant message exchange. These keywords will serve as a quick lookup to determine the relevancy of this message history.
 
         Fewer keywords is better, so make sure the keywords you have chosen are impactful, relevant, and significant. Wrap the collection of keywords identified in the exact tags of [BEGINNING_OF_KEYWORDS] and [END_OF_KEYWORDS].
+
+        If there are no significant or meaningful keywords it is acceptable to return an empty string enclosed by the relevant tags.
+
+        If there is no significant or meaningful summary it is acceptable to return an empty string enclosed by the relevant tags.
 
         [BEGINNING OF MESSAGE HISTORY]: 
         ${memoryFragments}
@@ -287,7 +665,7 @@ async function modelCallToCraftMemorySummaryAndKeywords(
 
 // Use model to extract Summary and Keywords returned by the model
 // in a single string into separate fields based on the seperation tags we asked the model to append
-function extractSummaryAndKeywords(
+export function extractSummaryAndKeywords(
     response: string,
 ): { summary: string; keywords: string } {
     const normalizeTag = (tag: string): string =>
@@ -408,11 +786,11 @@ export async function updateTableOfMemoriesIncrementally(
         const firstCharacter = category[0].toUpperCase();
 
         const tomFileName =
-            firstCharacter >= "A" && firstCharacter <= "J"
-                ? "TOM_A-J.json"
-                : firstCharacter >= "K" && firstCharacter <= "Q"
-                    ? "TOM_K-Q.json"
-                    : "TOM_R-Z.json";
+            firstCharacter >= `${TOM_RANGES.first.start}` && firstCharacter <= `${TOM_RANGES.first.end}`
+                ? `TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}.json`
+                : firstCharacter >= `${TOM_RANGES.second.start}` && firstCharacter <= `${TOM_RANGES.second.end}`
+                    ? `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}.json`
+                    : `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}.json`;
 
         const tomFilePath = path.join(
             memoriesDirectory,
@@ -493,7 +871,7 @@ export async function updateTableOfMemoriesIncrementally(
 
 // The prompt that asks the model to merge new user/assistant turns added to the memory file
 // into the contents of the exisiting TOM keywords and summary
-async function modelCallToUpdateMemorySummaryAndKeywords(
+export async function modelCallToUpdateMemorySummaryAndKeywords(
     consolidationInput: string,
 ): Promise<string> {
     
@@ -503,13 +881,15 @@ async function modelCallToUpdateMemorySummaryAndKeywords(
     const prompt = `
         The user needs you the assistant to update the CURRENT SUMMARY AND CURRENT KEYWORDS if there is any impactful, significant or relevant changes based on the addition of the NEW MEMORY FRAGMENTS.
 
-        If there are no substantial additions to the summary or keywords it is acceptable to return the original current summary and current keywords.
-
         Ensure that the final summary you provide is faithful to the current summary and retains it's key elements and takes into account the additional content provided by the new memory fragments. Wrap your final summary in the exact tags of [BEGINNING_OF_SUMMARY] and [END_OF_SUMMARY].
 
         In addition to updating the summary, identify only significant keywords from the new memory fragments which are relevant enough to be add to the current keywords.
 
-        Try to limit yourself to no more than 7 of the best suited keywords, so make sure the keywords you have chosen to add or remove are substantive. Wrap the collection of keywords identified in the exact tags of [BEGINNING_OF_KEYWORDS] and [END_OF_KEYWORDS].
+        Try to limit yourself to no more than 10 of the best suited keywords, so make sure the keywords you have chosen to add or remove are substantive. Wrap the collection of keywords identified in the exact tags of [BEGINNING_OF_KEYWORDS] and [END_OF_KEYWORDS].
+
+        If there are no significant or meaningful keywords to add or remove return back the keywords that you originally received.
+
+        If there is no significant or meaningful update to the summary return back the summary that you originally received.
 
         [BEGINNING OF PACKAGE]: 
         ${consolidationInput}
@@ -545,14 +925,18 @@ export async function deleteMemoryFromTableOfMemories(
     const firstCharacter = category[0].toUpperCase();
 
     const tomFileName =
-        firstCharacter >= "A" && firstCharacter <= "J"
-            ? "TOM_A-J.json"
-            : firstCharacter >= "K" && firstCharacter <= "Q"
-                ? "TOM_K-Q.json"
-                : "TOM_R-Z.json";
+        firstCharacter >= `${TOM_RANGES.first.start}` && firstCharacter <= `${TOM_RANGES.first.end}`
+            ? `TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}.json`
+            : firstCharacter >= `${TOM_RANGES.second.start}` && firstCharacter <= `${TOM_RANGES.second.end}`
+                ? `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}.json`
+                : `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}.json`;
 
     const tomFilePath = join(memoriesDirectory, tomFileName);
-    const fileName = `${category}/${filename}`;
+
+    const fileName = [
+        category,
+        filename,
+    ].join("/");
 
     const tomContent = await readFile(tomFilePath, "utf-8");
     const tableOfMemories: TableOfMemoriesEntity[] =
@@ -588,9 +972,9 @@ export async function tableOfMemoriesSummariesLookup(
     const memoriesDirectory = await memoryStore.getMemoriesDirectory();
 
     const tomFileNames = [
-        "TOM_A-J.json",
-        "TOM_K-Q.json",
-        "TOM_R-Z.json",
+        `TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}.json`,
+        `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}.json`,
+        `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}.json`,
     ];
 
     // Load all TOM entries into memory.
@@ -724,7 +1108,6 @@ export async function tableOfMemoriesSummariesLookup(
     }
 
     return(
-        "Display the results to the user exactly as given:\n\n" +
         finalResults.join("\n\n")
     );
 }
@@ -789,7 +1172,7 @@ async function modelCallToSelectMemoryFilenamesBySummaries(
 
         Best matches does not require exact word matches, you may match for similar meaning or themes.
 
-        Limit yourself to at most 3 filenames of the best matching summaries. It is acceptable to return nothing if there are no good matches.
+        Limit yourself to at most 5 filenames of the best matching summaries. It is acceptable to return nothing if there are no good matches.
 
         Return the simple text formatted filename matches in a single string array.
 
@@ -862,9 +1245,9 @@ export async function tableOfMemoriesDirectLookup(
     const memoriesDirectory = await memoryStore.getMemoriesDirectory();
 
     const validTomFiles = [
-        "TOM_A-J",
-        "TOM_K-Q",
-        "TOM_R-Z",
+        `TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}`,
+        `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}`,
+        `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}`,
     ];
 
     const normalizedTomName = tomName
@@ -887,7 +1270,7 @@ export async function tableOfMemoriesDirectLookup(
         const fsError = error as NodeJS.ErrnoException;
 
         if (fsError.code === "ENOENT") {
-            return "";
+            return "not initialized";
         }
 
         throw error;
@@ -895,166 +1278,9 @@ export async function tableOfMemoriesDirectLookup(
 }
 
 //-------------------------------------------------
-// UserText Interceptor To Determine TOM Regex Commands
-//-------------------------------------------------
-
-// First layer filter that will try to determine if the userText
-// is a TOM fuzzy search or TOM table lookup command.
-export async function processMessageForTom(
-    userText: string,
-): Promise<void>{
-
-    const TABLE_OF_MEMORIES_REGEX = getTableOfMemoriesRegex();
-
-    const FUZZY_SEARCH_MEMORY_REGEX = getFuzzySearchRegex();
-
-    const tomMatch = userText.match(TABLE_OF_MEMORIES_REGEX);
-
-    const pendingTomCommand = getPendingTomCommand();
-
-    // First layer check for direct table of memories lookup.
-    // This captures a broad userText with keywords for 'fetch' & 'table' & 'memory|memories' || 'tom'
-    if (
-        tomMatch ||
-        pendingTomCommand === "incomplete"
-    ) {
-
-        const match = extractMemoryRange(userText);
-
-        // Second layer check to see if those three same values exist AND there is variation of `TOM_A-J`, `TOM_K-Q`, `TOM_R-Z`
-        // which is the expected table names ai, a i, a_i validate too as long as they've cleared the first layer check
-        if (match) {
-
-            const tableName = `TOM_${match.toUpperCase()}`;
-
-            const returnPackage = await tableOfMemoriesDirectLookup(tableName);
-            
-            const constructedTableString = formatAsTableString(returnPackage);
-            
-            // Inject the constructedTableString into the newest assistant message.
-
-            addConversationOperation(
-                "tryAppendTableOfMemoriesContentTimeoutFunction",
-                {
-                    constructedTableString,
-                },
-            );
-
-            setPendingTomCommand("ready");
-        }
-
-        if (!match) {
-            // Build a string to append to ask the user which table they like to look up
-            // giving them their full options.
-            // Set ourselves in a global state to wait for that answer.
-
-            const constructedTableString = 'Specify exactly which Table of Memories you wish to retrieve: `TOM_A-J`, `TOM_K-Q`, `TOM_R-Z`';
-
-            addConversationOperation(
-                "tryAppendTableOfMemoriesContentTimeoutFunction",
-                {
-                    constructedTableString,
-                },
-            );
-
-            setPendingTomCommand("incomplete");
-        }
-    }
-
-    // Fuzzy Search Regex matched first layer check, send it through to 
-    // the model to validate and extract the search query.
-    const fuzzySearchMatch = userText.match(FUZZY_SEARCH_MEMORY_REGEX);
-
-    if (fuzzySearchMatch) {
-        
-        const extractedQuery = await askModelToValidateFuzzySearchRegexAndExtractQuery(userText);
-        
-        if (extractedQuery === "") return;
-
-        const returnPackage = await tableOfMemoriesSummariesLookup(extractedQuery);
-
-        if (returnPackage === "") return;
-
-        const constructedTableString = constructTOMSummariesLookupTable(returnPackage);
-        
-        // Inject the constructedTableString into the newest assistant message.
-        addConversationOperation(
-            "tryAppendTableOfMemoriesContentTimeoutFunction",
-            {
-                constructedTableString,
-            },
-        );
-
-        setPendingTomCommand("ready");
-    }
-}
-
-// Second filter to validate a search command and extract 
-// the search query which will be fed to compare to keywords and summaries
-// Low cost hybrid approach rather than try and predict every formatting a user may 
-// weave their actual query in during a save command.
-async function askModelToValidateFuzzySearchRegexAndExtractQuery(
-    userText: string,
-):Promise<string> {
-    const client = getController().client;
-    const model = await client.llm.model();
-    
-    const prompt = `
-        The user has provided a text which may be a request or command to recall, find, or any synonym of 'search' for a MEMORY OR MEMORIES. 
-
-        Extract the subject or phrase of what they are trying to search for. Do not include the search command within your returned string of the search query you have extracted.
-
-        If this was not a valid search query return an empty string.
-
-        [BEGINNING OF USER TEXT]: 
-        ${userText}
-        [END OF USER TEXT]
-        `.trim();
-
-    const result = await model.respond(
-        prompt,
-        {
-            temperature: 0,
-        },
-    );
-
-    const cleanedText = result.content
-        .replace(
-            /^[\s\S]*?__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[A-Za-z0-9]+__/i,
-            "",
-        )
-        .replace(/^[\s\S]*?```(?:json)?\s*/i, "")
-        .replace(/\s*```[\s\S]*$/i, "")
-        .trim();
-
-    return cleanedText;
-}
-
-// Extracts the TOM suffix identifier for TOM file of interest
-function extractMemoryRange(input: string): string | null {
-    
-    const MEMORY_RANGE_REGEX = getMemoryRangeRegex();
-    
-    const match = input.match(MEMORY_RANGE_REGEX);
-    if (!match) return null;
-
-    const letters = match[1].replace(/[\s-]/g, "").toLowerCase();
-
-    if (!/^[a-z]{2}$/.test(letters)) return null;
-
-    const [start, end] = letters;
-
-    if (/[a-j]/.test(start) && /[a-j]/.test(end)) return "a-j";
-    if (/[k-q]/.test(start) && /[k-q]/.test(end)) return "k-q";
-    if (/[r-z]/.test(start) && /[r-z]/.test(end)) return "r-z";
-
-    return null;
-}
-
-//-------------------------------------------------
 // String Constructors to replace Assistant's last Text with Prepared Content
 //-------------------------------------------------
-function constructTOMSummariesLookupTable(
+export function constructTOMSummariesLookupTable(
     returnPackage: string,
 ): string {
     const MEMORY_ENTRY_REGEX =
@@ -1076,6 +1302,7 @@ function constructTOMSummariesLookupTable(
         .replace(/\r?\n/g, "<br>");
 
     return [
+        '📦 **`Memory Package`**',
         "| Filename | Summary |",
         "| --- | --- |",
         ...entries.map(
@@ -1105,6 +1332,7 @@ export function formatAsTableString(input: string): string {
     ];
 
     return [
+        '📦 **`Memory Package`**',
         `| ${headers.join(" | ")} |`,
         `| ${headers.map(() => "---").join(" | ")} |`,
         ...data.map((file: {
@@ -1123,12 +1351,34 @@ export function formatAsTableString(input: string): string {
     ].join("\n");
 }
 
+export function constructNonExisitingMemoryString(
+    memorySeedsPool: string[],
+): string {
+    return [
+        '📦 **`Memory Package`**',
+        "",
+        `*That memory seed does not exist.* **These are your available memories:**`,
+        "",
+        ...memorySeedsPool.map(seed => `- ${seed}`),
+    ].join("\n");
+}
+
+export function constructTomEmptyReturnPackage(
+    extractedQuery: string,
+): string {
+
+    return [
+        `## **No content was retrieved for the query:** ${extractedQuery}.`,
+    ].join("\n");
+}
+
 //-------------------------------------------------
 // Function for multiEditCoordinator
 //-------------------------------------------------
-export async function tryAppendTableOfMemoriesContentTimeoutFunction(
+export async function tryAppendTableOfMemoriesContentFunction(
     latestConversation: any,
     constructedTableString: string,
+    targetAssistantMessageIndex: number,
 ): Promise<void> {
 
     let lines: string[] = [];
@@ -1140,5 +1390,182 @@ export async function tryAppendTableOfMemoriesContentTimeoutFunction(
     await editAssistantResponse(
         latestConversation,
         lines.join("\n\n"),
+        targetAssistantMessageIndex,
+    );
+}
+
+export async function tryRetractOldTomsFunction(
+    latestConversation: any,
+    lastAssistantMessageIndex: number,
+    retractOldToms: number,
+    enableToolsMode: boolean,
+): Promise<void> {
+    if (retractOldToms === 0) return;
+
+    const storedIndex = getLastKnownIndexOfRetractedToms();
+    const startIndex = storedIndex ?? 0;
+
+    const marker = "📦";
+    
+    const toolNames = new Set([
+        "table_of_memories_lookup",
+        "memory_seed_recall",
+        "direct_memory_lookup",
+        "compaction_file_fetch"
+    ]);
+
+    // Collect message indices that contain an assistant version.
+    const assistantMessageIndices = latestConversation.messages
+        .map((message: any, index: number) =>
+            message.versions?.some(
+                (version: any) => version.role === "assistant"
+            )
+                ? index
+                : -1
+        )
+        .filter((index: number) => index !== -1);
+
+    // Keep the last two assistant messages untouched.
+    const excludedAssistantIndices = new Set(
+        assistantMessageIndices.slice(-retractOldToms)
+    );
+
+    // Scan messages starting at the saved index.
+    for (
+        let messageIndex = startIndex;
+        messageIndex < latestConversation.messages.length;
+        messageIndex++
+    ) {
+        // Preserve the existing exclusion behavior.
+        if (excludedAssistantIndices.has(messageIndex)) {
+            continue;
+        };
+
+        const message = latestConversation.messages[messageIndex];
+
+        // Process each assistant version independently.
+        for (const version of message.versions ?? []) {
+            if (version.role !== "assistant") continue;
+
+            // TOOLS MODE:
+            // Find the matching tool result, not assistant text or a tool request.
+            if (enableToolsMode) {
+                let matchingResultStepIndex = -1;
+
+                for (
+                    let stepIndex = 0;
+                    stepIndex < (version.steps ?? []).length;
+                    stepIndex++
+                ) {
+                    const step = version.steps[stepIndex];
+
+                    // step.content directly contains the toolCallResult item.
+                    for (const item of step.content ?? []) {
+                        if (item.type !== "toolCallResult") continue;
+                        if (!toolNames.has(item.name)) continue;
+                        if (typeof item.content !== "string") continue;
+
+                        // Check for the marker within the first five characters.
+                        if (item.content.slice(0, 10).includes(marker)) {
+                            // Retract only this matching tool result.
+                            item.content = "Content Retracted";
+                            matchingResultStepIndex = stepIndex;
+                            break;
+                        }
+                    }
+
+                    if (matchingResultStepIndex !== -1) break;
+                }
+
+                // Only retract the assistant response if a tool result matched.
+                if (matchingResultStepIndex !== -1) {
+                    // A matching tool result was found.
+                    // Retract the subsequent normal assistant response.
+                    for (
+                        let stepIndex = matchingResultStepIndex + 1;
+                        stepIndex < (version.steps ?? []).length;
+                        stepIndex++
+                    ) {
+                        const step = version.steps[stepIndex];
+
+                        // Skip thinking blocks.
+                        if (step.style?.type === "thinking") continue;
+
+                        const responseText = (step.content ?? []).find(
+                            (item: any) =>
+                                item.type === "text" &&
+                                typeof item.text === "string"
+                        );
+
+                        if (responseText) {
+                            responseText.text = "Content Retracted";
+                            break;
+                        }
+                    }
+                } else {
+                    // No matching tool result: search assistant text directly.
+                    for (const step of version.steps ?? []) {
+                        // Skip thinking blocks.
+                        if (step.style?.type === "thinking") continue;
+
+                        for (const item of step.content ?? []) {
+                            if (
+                                item.type === "text" &&
+                                typeof item.text === "string" &&
+                                item.text.slice(0, 10).includes(marker)
+                            ) {
+                                item.text = "Content Retracted";
+                                break;
+                            }
+                        }
+
+                        // Stop after finding and retracting a matching response.
+                        if (
+                            (step.content ?? []).some(
+                                (item: any) => item.type === "text" &&
+                                    item.text === "Content Retracted"
+                            )
+                        ) {
+                            break;
+                        }
+                    }
+                }
+
+                // Do not run the non-tools text-marker logic in tools mode.
+                continue;
+            }
+
+            // NON-TOOLS MODE:
+            // Find an assistant response containing the marker near the start,
+            // while explicitly excluding thinking steps.
+            let found = false;
+
+            for (const step of version.steps ?? []) {
+                // Never retract text from a thinking step.
+                if (step.style?.type === "thinking") continue;
+
+                // Inspect text items in this non-thinking step.
+                for (const item of step.content ?? []) {
+                    if (
+                        item.type === "text" &&
+                        typeof item.text === "string" &&
+                        item.text.slice(0, 10).includes(marker)
+                    ) {
+                        // Retract the matching assistant response text.
+                        item.text = "Content Retracted";
+                        found = true;
+                        break;
+                    }
+                }
+
+                // Stop after retracting the first matching text item.
+                if (found) break;
+            }
+        }
+    }
+
+    // Preserve the existing saved-index behavior.
+    setLastKnownIndexOfRetractedToms(
+        assistantMessageIndices.slice(-2)[0] ?? lastAssistantMessageIndex
     );
 }
