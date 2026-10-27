@@ -155,7 +155,7 @@ export function createConfig(
                 displayName: "🌱 Compaction ➠ Memory Seed",
                 subtitle: "XPlugin Feature: Hover for details.",
                 warning: "REQUIRES the companion plugin Context Cleanup rev8+ enabled.",
-                hint: "REQUIRES the companion plugin Context Cleanup rev8+ from LM Studio or v4.0+ from Github. \n\n Converts a single compaction into a memory seed (one-time | Readme for specifics). \n\n <name_c#_p#.json> >> <category>/<name>.json \n\n Use >> specifically to separate the compaction seed from the memory seed. \n\n\n **Chat Commands:** \n - list compaction seeds \n - fetch compaction <name_c#_p#.json>",
+                hint: "REQUIRES the companion plugin Context Cleanup rev8+ from LM Studio or v4.0+ from Github. \n\n Converts a single compaction into a memory seed (one-time | Readme for specifics). \n\n <name_c#_p#.json> >> <category>/<name>.json \n\n Use >> specifically to separate the compaction seed from the memory seed. \n\n\n **Chat Commands:** \n - list compaction seeds \n - fetch compaction <name_c#_p#.json> \n\n Check the console log to see confirmation outputs.",
                 placeholder: "name_c#_p#.json >> category/name.json",
             },
             engrainCompaction,
@@ -475,11 +475,3 @@ export function setContextCleanupPluginInUse(value: boolean | null): void {
 export function getContextCleanupPluginInUse(): boolean | null {
   return contextCleanupPluginInUse;
 }
-
-// export function setContextCleanupConversationName(value: string): void {
-//   contextCleanupConversationName = value;
-// }
-
-// export function getContextCleanupConversationName(): string {
-//   return contextCleanupConversationName;
-// }

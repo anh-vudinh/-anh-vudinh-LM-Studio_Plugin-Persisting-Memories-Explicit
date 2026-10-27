@@ -37,7 +37,7 @@ import type {
     ChatMessage,
     PromptPreprocessorController,
 } from "@lmstudio/sdk";
-import { processMessageForCompactionSummary, tableOfCompactionsMain } from "./tableOfCompactions";
+import { processMessageForCompaction, tableOfCompactionsMain } from "./tableOfCompactions";
 
 let injectedMemorySeeds: string[] | null = null;
 let cleanupAllSeeds: boolean;
@@ -185,7 +185,7 @@ export async function promptPreprocessor(
     // taking the power away from unreliable model/tools approach from determining this.
     await processMessageForSaveMemory(userText, messages, enableToolsMode);
     
-    await processMessageForCompactionSummary(userText, enableToolsMode);
+    await processMessageForCompaction(userText, enableToolsMode);
 
     // Model appends message # at the end of the it's response
     // prerequisite to instructing to save memory

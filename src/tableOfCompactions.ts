@@ -92,7 +92,12 @@ export async function tableOfCompactionsMain(
     await processCompactionFileDataAndCreateMemorySeeds(parsedCompactionFileData);
 }
 
-export async function processMessageForCompactionSummary(
+/**
+ * Process user text if they're trying to get a summary or list the compaction seeds.
+ * List compaction seed command works in both tools and explicit mode.
+ * Tools mode has it's own summary call. This is the explicit's summary function.
+ */
+export async function processMessageForCompaction(
     userText: string,
     enableToolsMode: boolean,
 ): Promise<void>{
@@ -138,8 +143,6 @@ export async function processMessageForCompactionSummary(
             allSeeds,
         );
 
-        console.log(requestedFileName)
-
         if (!requestedFileName) return;
 
         // Check the TOC_Seeds Directory if there is a file matching the request
@@ -160,22 +163,13 @@ export async function processMessageForCompactionSummary(
     }
 }
 
-export async function tryAppendCompactionSummaryFunction(
-    latestConversation: any,
-    constructedTableString: string,
-    targetAssistantMessageIndex: number,
-): Promise<void> {
-
-    await editAssistantResponse(
-        latestConversation,
-        constructedTableString,
-        targetAssistantMessageIndex,
-    );
-}
-
 //-------------------------------------------------
 // TABLE OF COMPACTION FILE MAINTANENCE
 //-------------------------------------------------
+
+/**
+ * Creates/Intializes the Compaction related folders and files
+ */
 async function createTableOfCompactions(
     memoriesDirectory: string,
 ): Promise<void> {
@@ -282,6 +276,77 @@ async function createTableOfCompactions(
     }
 }
 
+/**
+ * Gathers all the compaction seeds in the TOC_Seeds folder and displays it for the user.
+ */
+export async function listCompactionSeeds(
+    tableFormat: boolean,
+): Promise<string> {
+    const memoriesDirectory = getValidatedMemoriesRootDirectory();
+
+    const tocSeedsDirectory = path.join(
+        memoriesDirectory,
+        "compactions",
+        "TOC_Seeds",
+    );
+
+    const availableFiles = (await fs.readdir(tocSeedsDirectory, {
+        withFileTypes: true,
+    }))
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+    if (availableFiles.length === 0) {
+        return "No compaction seeds are available.";
+    }
+
+    const groupedFiles = new Map<string, string[]>();
+
+    for (const fileName of availableFiles) {
+        const baseFileName = fileName.replace(
+            /_c\d+_p\d+(?: - Copy)?\.json$/i,
+            "",
+        );
+
+        const existingFiles = groupedFiles.get(baseFileName) ?? [];
+        existingFiles.push(fileName);
+        groupedFiles.set(baseFileName, existingFiles);
+    }
+    
+    let index = 1;
+
+    if (!tableFormat) {
+        return availableFiles
+            .map((fileName, index) => `${index + 1}. ${fileName}`)
+            .join("\n");
+    }
+
+    const rows = [...groupedFiles.entries()].map(
+        ([baseFileName, fileNames]) => {
+            const numberedFiles = fileNames
+                .map(fileName => `${index++}. ${fileName}`)
+                .join("<br>");
+
+            return `| ${baseFileName} | ${numberedFiles} |`;
+        },
+    );
+
+    return [
+        '📦 **`Compaction List Package`**',
+        "| Base Name | Compaction Seed Files |",
+        "|---|---|",
+        ...rows,
+    ].join("\n");
+}
+
+/**
+ * Checks the specific conversation folder to see if any .copy exist.
+ * The folder checked will only ever be the direct folder where the related conversation file exist.
+ * So no extra drilling allowed for nested folders. Helps save processing power.
+ * If a .copy file is found (name does not matter, done on purpose, so an unresolved .copy files still has a chance to be made into a compaction seed)
+ * then it will be read and parsed into memory.
+ */
 async function findShadowCopyAndParse(): Promise<({ filePath: string } & CompactionSnapshot) | null> {
     const conversationsDirectory = getValidatedConversationRootDirectory();
     const conversationFile = getConversationFileName();
@@ -313,6 +378,9 @@ async function findShadowCopyAndParse(): Promise<({ filePath: string } & Compact
     return null;
 }
 
+/**
+ * The main processing of the copy file contents in memory into a compaction seed. This is the director of all the work.
+ */
 async function processCompactionFileDataAndCreateMemorySeeds(
     parsedCompactionFileData: ({ filePath: string } & CompactionSnapshot),
 ): Promise<boolean> {
@@ -321,6 +389,7 @@ async function processCompactionFileDataAndCreateMemorySeeds(
     const messages: ChatMessage[] = parsedCompactionFileData.messages;
     const fileName = parsedCompactionFileDataParams.conversationName;
 
+    // Determines the maximum number of parts expected. Trying to keep each part worth 20% of the user's context window.
     const splitToParts = parsedCompactionFileDataParams.autoCleanupThreshold <= 60 ? 3 : 4;
 
     // Account for the latest assistant response missing from the array.
@@ -334,7 +403,7 @@ async function processCompactionFileDataAndCreateMemorySeeds(
     );
 
     // Never create more parts than there are responses to save.
-    const numberOfParts = Math.min(splitToParts, responsesToCompact);   //good
+    const numberOfParts = Math.min(splitToParts, responsesToCompact);
 
     const matchingFiles = await scanForAndReturnMatchingFiles(fileName);
 
@@ -416,7 +485,7 @@ async function processCompactionFileDataAndCreateMemorySeeds(
         //     saveResults,
         // });
 
-        // Logs if any seed saved at all.
+        // Logs if any seed saved at all. Triggers early exit if seeds were all filtered out because the user message/assistant response was considered metadata only
         if (seedsWereSaved === false) {
             seedsWereSaved = saveResults;
         }
@@ -445,113 +514,9 @@ async function processCompactionFileDataAndCreateMemorySeeds(
     return true;
 }
 
-export async function tryAppendTOCTrailFunction(
-    latestConversation: any,
-    matchingFiles: string[],
-    targetAssistantMessageIndex: number,
-): Promise<void> {
-    const lines: string[] = [];
-
-    interface CompactionPart {
-        fileName: string;
-        prefix: string;
-        compaction: number;
-        part: number;
-    }
-
-    const parseCompactionPart = (
-        fileName: string,
-    ): CompactionPart | null => {
-        const match = fileName.match(
-            /^(.*)_c(\d+)_p(\d+)\.json$/,
-        );
-
-        if (!match) {
-            return null;
-        }
-
-        return {
-            fileName,
-            prefix: match[1],
-            compaction: Number(match[2]),
-            part: Number(match[3]),
-        };
-    };
-
-    const parsedFiles = matchingFiles
-        .map(parseCompactionPart)
-        .filter(
-            (part): part is CompactionPart =>
-                part !== null,
-        );
-
-    const groups: CompactionPart[][] = [];
-
-    for (const part of parsedFiles) {
-        const lastGroup = groups[groups.length - 1];
-
-        const belongsToLastGroup =
-            lastGroup &&
-            lastGroup[0].prefix === part.prefix &&
-            lastGroup[0].compaction === part.compaction;
-
-        if (belongsToLastGroup) {
-            lastGroup.push(part);
-        } else {
-            groups.push([part]);
-        }
-    }
-
-    const orderedPartNames = groups
-        .map((group, index) => {
-            const isLast = index === groups.length - 1;
-
-            const firstFile = group[0].fileName;
-
-            const remainingParts = group
-                .slice(1)
-                .map((part) => `p${part.part}`);
-
-            const partsLabel = remainingParts.length > 0
-                ? ` *(PARTS: ${remainingParts.join(", ")})*`
-                : "";
-
-            const groupLabel = `${firstFile}${partsLabel}`;
-
-            return isLast
-                ? `${groupLabel} ➯ **[Current Session]**`
-                : groupLabel;
-        })
-        .join(" ➯ ");
-
-    const latestFileName =
-        matchingFiles[matchingFiles.length - 1];
-
-    const compactionCount = latestFileName
-        ? Number(
-            latestFileName.match(
-                /_c(\d+)_p\d+\.json$/,
-            )?.[1] ?? 0,
-        )
-        : 0;
-
-    lines.push(
-        [
-            `---`,
-            `🚨**This chat session has been compacted:** ***${compactionCount}*** previous times🚨`,
-            `**Latest Compaction File Name:** ${latestFileName ? `*${latestFileName}*` : ""}`,
-            `**Compaction Trail:** ${orderedPartNames}`,
-            `---`,
-        ].join("\n\n"),
-    );
-
-    await appendCompactionWarning(
-        latestConversation,
-        lines.join("\n\n"),
-        targetAssistantMessageIndex,
-    );
-}
-
+/**
+ * A customized multiSaveMemory function specifically for compactions. Prepares all the data into the form to run saveMultipleSeeds.
+ */
 export async function multiSaveMemoryForCompaction(
     updated: PendingSaveMemory,
     extractedMessages: ExtractedMessage[],
@@ -637,53 +602,11 @@ export async function multiSaveMemoryForCompaction(
     }
 }
 
-function getTopicForMessage(
-    memoryNumber: number,
-    topicsForMessages: string,
-): string {
-    const topicPattern =
-        /Topic:\s*(.*?)\s*🔹\s*(\d+)\s*-\s*(\d+|end)/gi;
-
-    const topicRanges = [...topicsForMessages.matchAll(topicPattern)].map(
-        match => ({
-            topic: match[1].replace(/[\[\]\/]/g, "").trim(),
-            start: Number(match[2]),
-            end: match[3].toLowerCase() === "end"
-                ? Infinity
-                : Number(match[3]),
-        }),
-    ).sort((a, b) => a.start - b.start);
-
-    const matchingRange = topicRanges.find(
-        range =>
-            memoryNumber >= range.start &&
-            memoryNumber <= range.end,
-    );
-
-    if (matchingRange) {
-        return matchingRange.topic;
-    }
-
-    // Fallback because the model has shown to sometimes leave gaps in topic range coverage.
-    // So some memoryNumbers dont belong to anything. This will roll it over into a neighboring available topic.
-    // I've tweaked the prompt and topic parser to allow for variances in the return of the topics string. This another layer of insurance.
-    const nextRange = topicRanges.find(
-        range => range.start > memoryNumber,
-    );
-
-    if (nextRange) {
-        return nextRange.topic;
-    }
-
-    const previousRanges = topicRanges.filter(
-        range => range.end < memoryNumber,
-    );
-
-    return previousRanges.length > 0
-        ? previousRanges[previousRanges.length - 1].topic
-        : "";
-}
-
+/**
+ * Prepares the .copy file contents to a string organized and readable by the model to provide topics.
+ * The method is different from ChatMessages[], during a session we can use the .getMessagesArray() to extract the text.
+ * Because the shadow .copy is formatted like the ChatMessages[] but does not carry the built-in functions, we have to alter the text extraction method.
+ */
 export async function prepareHistoryMessagesForModel(
     messages: ChatMessage[],
 ): Promise<{
@@ -754,6 +677,12 @@ export async function prepareHistoryMessagesForModel(
     };
 }
 
+/**
+ * Ask the model to go through the stringified messages and provide topics or the root_input for each entry.
+ * This is to make the compaction seed file semi-conform to a memory seed file. This method is like a fuzzy shortcut and was done so that 
+ * we do not expend extra processing power using the memory seed normal route of asking the model to associate each assisatant message
+ * to the root user message 1 by 1. Trade off of less accuracy for more speed and less processing.
+ */
 async function modelCallToProvideTopics(
     conversationText: string,
 ): Promise<string> {
@@ -805,6 +734,60 @@ async function modelCallToProvideTopics(
     return cleanedText;
 }
 
+/**
+ * Helper: The model has already provided the topic and the ranges of where each message falls within those topic ranges.
+ * This associates which message belongs to which model assigned topic and returns the root_input (topic) for it.
+ */
+function getTopicForMessage(
+    memoryNumber: number,
+    topicsForMessages: string,
+): string {
+    const topicPattern =
+        /Topic:\s*(.*?)\s*🔹\s*(\d+)\s*-\s*(\d+|end)/gi;
+
+    const topicRanges = [...topicsForMessages.matchAll(topicPattern)].map(
+        match => ({
+            topic: match[1].replace(/[\[\]\/]/g, "").trim(),
+            start: Number(match[2]),
+            end: match[3].toLowerCase() === "end"
+                ? Infinity
+                : Number(match[3]),
+        }),
+    ).sort((a, b) => a.start - b.start);
+
+    const matchingRange = topicRanges.find(
+        range =>
+            memoryNumber >= range.start &&
+            memoryNumber <= range.end,
+    );
+
+    if (matchingRange) {
+        return matchingRange.topic;
+    }
+
+    // Fallback because the model has shown to sometimes leave gaps in topic range coverage.
+    // So some memoryNumbers dont belong to anything. This will roll it over into a neighboring available topic.
+    // I've tweaked the prompt and topic parser to allow for variances in the return of the topics string. This another layer of insurance.
+    const nextRange = topicRanges.find(
+        range => range.start > memoryNumber,
+    );
+
+    if (nextRange) {
+        return nextRange.topic;
+    }
+
+    const previousRanges = topicRanges.filter(
+        range => range.end < memoryNumber,
+    );
+
+    return previousRanges.length > 0
+        ? previousRanges[previousRanges.length - 1].topic
+        : "";
+}
+
+/**
+ * Create the TOC_Seeds file and TOC_Entity file for this new addition
+ */
 export async function updateTableOfCompactionsIncrementally(
     memoriesDirectory: string,
     category: string,
@@ -912,7 +895,9 @@ export async function updateTableOfCompactionsIncrementally(
     );
 }
 
-
+/**
+ * Add the new compaction to the members list of the collections file
+ */
 export async function updateTocCollectionsIncrementally(
     name: string,
 ): Promise<void> {
@@ -991,141 +976,11 @@ export async function updateTocCollectionsIncrementally(
     }
 }
 
-
-async function deleteExpiredCompactionsAndTocCleanup(
-    daysToTriggerExpire: number,
-): Promise<void> {
-    const memoriesDirectory = getValidatedMemoriesRootDirectory();
-
-    const compactionsDirectory = path.join(
-        memoriesDirectory,
-        "compactions",
-    );
-
-    const collectionsFilePath = path.join(
-        compactionsDirectory,
-        "TOC_Collections.json",
-    );
-
-    const tocSeedsDirectory = path.join(
-        compactionsDirectory,
-        "TOC_Seeds",
-    );
-
-    const tocEntityDirectory = path.join(
-        compactionsDirectory,
-        "TOC_Entity",
-    );
-
-    const tocSummariesDirectory = path.join(
-        compactionsDirectory,
-        "TOC_Summaries",
-    );
-
-    const now = new Date();
-    const today = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-    );
-
-    try {
-        const contents = await fs.readFile(
-            collectionsFilePath,
-            "utf-8",
-        );
-
-        const collections: TableOfCompactionsEntityCollection[] =
-            JSON.parse(contents);
-
-        const remainingCollections: TableOfCompactionsEntityCollection[] = [];
-        const expiredCollections: TableOfCompactionsEntityCollection[] = [];
-
-        for (const entry of collections) {
-            const [year, month, day] = entry.date_created_group
-                .split("-")
-                .map(Number);
-
-            const entryDate = new Date(year, month - 1, day);
-
-            if (Number.isNaN(entryDate.getTime())) {
-                remainingCollections.push(entry);
-                continue;
-            }
-
-            const ageInDays = Math.floor(
-                (today.getTime() - entryDate.getTime()) /
-                    (24 * 60 * 60 * 1000),
-            );
-
-            if (ageInDays > daysToTriggerExpire) {
-                expiredCollections.push(entry);
-            } else {
-                remainingCollections.push(entry);
-            }
-        }
-
-        for (const entry of expiredCollections) {
-            // Delete each member from the corresponding TOC collection group
-            for (const fileName of entry.members_fileName) {
-                // Delete the corresponding seed, if it exists
-                try {
-                    await fs.unlink(
-                        path.join(tocSeedsDirectory, fileName),
-                    );
-                } catch (error) {
-                    console.error(
-                        `[COMPACTION CLEANUP] Failed to delete "${fileName}":`,
-                        error,
-                    );
-                }
-
-                // Delete the corresponding cached summary, if it exists
-                try {
-                    await fs.unlink(
-                        path.join(tocSummariesDirectory, fileName),
-                    );
-                } catch (error) {
-                    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-                        console.error(
-                            `[COMPACTION CLEANUP] Failed to delete summary "${fileName}":`,
-                            error,
-                        );
-                    }
-                }
-            }
-
-            // Delete the corresponding TOC_Entity file
-            try {
-                await fs.unlink(
-                    path.join(
-                        tocEntityDirectory,
-                        `TOC_${entry.date_created_group}.json`,
-                    ),
-                );
-            } catch (error) {
-                console.error(
-                    `[COMPACTION CLEANUP] Failed to delete entity TOC for "${entry.date_created_group}":`,
-                    error,
-                );
-            }
-        }
-
-        if (expiredCollections.length > 0) {
-            await fs.writeFile(
-                collectionsFilePath,
-                JSON.stringify(remainingCollections, null, 2),
-                "utf-8",
-            );
-        }
-    } catch (error) {
-        console.error(
-            "[COMPACTION CLEANUP] Failed to clean up expired compactions:",
-            error,
-        );
-    }
-}
-
+/**
+ * Returns the compaction seeds matching the file name provided.
+ * Heythere will gather all of the Heythere compactions and parts.
+ * If no file name is provided then return all available compaction seeds in the folder.
+ */
 export async function scanForAndReturnMatchingFiles(
     fileName?: string,
 ): Promise<Dirent[]> {
@@ -1193,6 +1048,9 @@ export async function scanForAndReturnMatchingFiles(
         });
 }
 
+/**
+ * Checks if the actual compaction seed file exist
+ */
 export async function compactionSeedExists(
     name: string,
 ): Promise<boolean> {
@@ -1219,15 +1077,14 @@ export async function compactionSeedExists(
     }
 }
 
+/**
+ * Checks if the memory seed already exists
+ */
 export async function enCompactionSeedExists(
     extractedInputs: CompactionSeed,
 ): Promise<boolean> {
 
-    const { compactionSeed, memorySeed } = extractedInputs;
-
-    if (!/^.+_c\d+_p\d+\.json$/i.test(compactionSeed)) {
-        return false;
-    }
+    const { memorySeed } = extractedInputs;
 
     const memoryMatch = memorySeed.match(
         /^([^/\\]+)\/([^/\\]+\.json)$/i,
@@ -1257,6 +1114,238 @@ export async function enCompactionSeedExists(
     }
 }
 
+/**
+ * Creates an on-demand compaction summary for the user if they ask for it.
+ * The results are then saved and cached in case the user asks for it again in the future.
+ * Rather than process it brand new return to them the cached version.
+ */
+export async function createCompactionSummary(
+    requestedFileName: string,
+):Promise<string> {
+    const memoriesDirectory = getValidatedMemoriesRootDirectory();
+
+    const compactionsDirectory = path.join(
+        memoriesDirectory,
+        "compactions",
+    );
+
+    const tocSeedsDirectory = path.join(
+        compactionsDirectory,
+        "TOC_Seeds",
+    );
+
+    const tocSummariesDirectory = path.join(
+        compactionsDirectory,
+        "TOC_Summaries",
+    );
+    
+    const availableFiles = (await fs.readdir(tocSeedsDirectory, {
+        withFileTypes: true,
+    }))
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+        .filter(name => /^.+_c\d+_p\d+\.json$/i.test(name));
+
+    const exactMatch = availableFiles.find(
+        name => name.toLowerCase() === requestedFileName.toLowerCase(),
+    ) ?? null;
+
+    if (exactMatch === null) return "";
+
+    const compactionSeedFile = path.join(
+        tocSeedsDirectory,
+        exactMatch,
+    );
+
+    const compactionSummaryFile = path.join(
+        tocSummariesDirectory,
+        exactMatch,
+    );
+
+    let modelReturnPackage: string;
+
+    // Checks if we've already made a cached version of the summary, send this instead of doing a new call to the model.
+    try {
+        const cachedSummary = await fs.readFile(
+            compactionSummaryFile,
+            "utf-8",
+        );
+
+        modelReturnPackage = JSON.parse(cachedSummary) as string;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+        }
+
+        const stringifiedMessages =
+            await constructCompactionToInject(
+                compactionSeedFile,
+            );
+
+        modelReturnPackage =
+            await modelCallForOnDemandSummary(stringifiedMessages);
+
+        await fs.mkdir(tocSummariesDirectory, { recursive: true });
+
+        await fs.writeFile(
+            compactionSummaryFile,
+            JSON.stringify(modelReturnPackage),
+            "utf-8",
+        );
+    }
+
+    // Return the cached or newly generated summary.
+    return formatCompactionPackage(modelReturnPackage);
+}
+
+/**
+ * Helper: prepares the raw compaction seed into a string format to feed to
+ * the model to generate the compaction summary
+ */
+export async function constructCompactionToInject(
+    filePath: string,
+): Promise<string> {
+    const contents = await readFile(filePath, "utf-8");
+
+    const seeds = JSON.parse(contents) as Array<{
+        direct_input: string;
+        output: string;
+    }>;
+
+    let context = "";
+
+    for (const seed of seeds) {
+        context += `USER: ${seed.direct_input}\n\n`;
+        context += `ASSISTANT: ${seed.output}\n\n`;
+    }
+
+    return context;
+}
+
+/**
+ * Model Provides a summary of the compaction seed
+ */
+async function modelCallForOnDemandSummary(
+    conversationText: string,
+): Promise<string> {
+    const client = getController().client;
+    const model = await client.llm.model();
+    
+    const prompt = `
+        Provided to you is a chat transcript between a user and assistant with a prefix labeling each turn which it belongs too.
+
+        These messages are ordered chronologically, the user needs you the assistant to comb through the chat transcript and extremely condense the contents down do it's most relevant parts. 
+
+        The condensed version you create must not lose the messages original meaning and intent.
+
+        The user will be using your output to determine if this chat transcript is relevant to them, so make notes of key elements that will remind them of exactly what this user assistant exchange was about.
+
+        Elements which you find that are of little important or may simply be to generalized and unspecific should not be a target of focus to help identify this chat exchange.
+
+        If this is code make sure to highlight the finalized code that you can derive from the chat transcript.
+
+        If this is a novel or writing related make sure to highlight the finalized written work.
+
+        If this is a general inquiry make sure to highlight all relevant inquiries along with their assistant provided answers.
+
+        If this is role-play make sure to highlight the setting, progressions, and current state of the act.
+
+        For any subject not mentioned above, use your own best discretion.
+
+        [BEGINNING OF CHAT TRANSCRIPT]: 
+        ${conversationText}
+        [END OF CHAT TRANSCRIPT]
+        `.trim();
+
+    const result = await model.respond(
+        prompt,
+        {
+            temperature: 0,
+        },
+    );
+
+    const cleanedText = result.content
+        .replace(
+            /^[\s\S]*?__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[A-Za-z0-9]+__/i,
+            "",
+        )
+        .replace(/^[\s\S]*?```(?:json)?\s*/i, "")
+        .replace(/\s*```[\s\S]*$/i, "")
+        .trim();
+
+    return cleanedText;
+}
+
+interface CompactionSeed {
+    compactionSeed: string;
+    memorySeed: string;
+}
+
+/**
+ * Separates the engrainCompaction field text into the compaction seed and memory seed text.
+ */
+export function extractCompactionMemorySeeds(
+    engrainCompaction: string,
+): CompactionSeed | null {
+    const match = engrainCompaction.match(
+        /^(.+_c\d+_p\d+\.json)\s*>>\s*([^/\\]+\/[^/\\]+\.json)$/i,
+    );
+
+    if (!match) {
+        return null;
+    }
+
+    return {
+        compactionSeed: match[1].trim(),
+        memorySeed: match[2].trim(),
+    };
+}
+
+/**
+ * Check the TOC_Collections to see if the compaction 
+ * seed has been engrained on any date group.
+ */
+export async function validateIfAlreadyEngrained(
+    compactionSeed: string,
+): Promise<boolean | null> {
+    const memoriesDirectory = getValidatedMemoriesRootDirectory();
+
+    const collectionsFilePath = path.join(
+        memoriesDirectory,
+        "compactions",
+        "TOC_Collections.json",
+    );
+
+    try {
+        const collections: TableOfCompactionsEntityCollection[] =
+            JSON.parse(
+                await fs.readFile(collectionsFilePath, "utf-8"),
+            );
+
+        const results = collections.some(collection =>
+            collection.engrained_fileName.includes(compactionSeed),
+        );
+
+        if (results) {
+            console.log(
+                `[COMPACTION] "${compactionSeed}" was already engrained.`,
+            );
+        }
+
+        return results;
+    } catch (error) {
+        console.error(
+            `[COMPACTION] Failed to check whether "${compactionSeed}" is already engrained:`,
+            error,
+        );
+
+        return null;
+    }
+}
+
+/**
+ * Used to create a brand new memory seed from a compaction seed
+ */
 export async function compactionToMemorySeedTransfer(
     seedNames: CompactionSeed,
 ): Promise<void> {
@@ -1418,433 +1507,12 @@ export async function compactionToMemorySeedTransfer(
     }
 }
 
-async function modelCallForOnDemandSummary(
-    conversationText: string,
-): Promise<string> {
-    const client = getController().client;
-    const model = await client.llm.model();
-    
-    const prompt = `
-        Provided to you is a chat transcript between a user and assistant with a prefix labeling each turn which it belongs too.
-
-        These messages are ordered chronologically, the user needs you the assistant to comb through the chat transcript and extremely condense the contents down do it's most relevant parts. 
-
-        The condensed version you create must not lose the messages original meaning and intent.
-
-        The user will be using your output to determine if this chat transcript is relevant to them, so make notes of key elements that will remind them of exactly what this user assistant exchange was about.
-
-        Elements which you find that are of little important or may simply be to generalized and unspecific should not be a target of focus to help identify this chat exchange.
-
-        If this is code make sure to highlight the finalized code that you can derive from the chat transcript.
-
-        If this is a novel or writing related make sure to highlight the finalized written work.
-
-        If this is a general inquiry make sure to highlight all relevant inquiries along with their assistant provided answers.
-
-        If this is role-play make sure to highlight the setting, progressions, and current state of the act.
-
-        For any subject not mentioned above, use your own best discretion.
-
-        [BEGINNING OF CHAT TRANSCRIPT]: 
-        ${conversationText}
-        [END OF CHAT TRANSCRIPT]
-        `.trim();
-
-    const result = await model.respond(
-        prompt,
-        {
-            temperature: 0,
-        },
-    );
-
-    const cleanedText = result.content
-        .replace(
-            /^[\s\S]*?__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[A-Za-z0-9]+__/i,
-            "",
-        )
-        .replace(/^[\s\S]*?```(?:json)?\s*/i, "")
-        .replace(/\s*```[\s\S]*$/i, "")
-        .trim();
-
-    return cleanedText;
-}
-
-function extractCompactionFileName(
-    userText: string,
-    availableFiles: string[],
-): string | null {
-    const normalizedText = userText.trimEnd().toLowerCase();
-
-    const matchingFile = [...availableFiles]
-        .sort((a, b) => b.length - a.length)
-        .find(fileName => normalizedText.endsWith(fileName.toLowerCase()));
-
-    return matchingFile ?? null;
-}
-
-export async function promptProcessorConstructCompactionToInject(
-    filePath: string,
-): Promise<string> {
-    const contents = await readFile(filePath, "utf-8");
-
-    const seeds = JSON.parse(contents) as Array<{
-        direct_input: string;
-        output: string;
-    }>;
-
-    let context = "";
-
-    for (const seed of seeds) {
-        context += `USER: ${seed.direct_input}\n\n`;
-        context += `ASSISTANT: ${seed.output}\n\n`;
-    }
-
-    return context;
-}
-
-export function formatCompactionPackage(
-    packageText: string
-): string {
-    const formattedMemories: string[] = [];
-
-    formattedMemories.push(
-        [
-            '📦 **`Compaction Summary Package`**',
-            packageText,
-        ].join("\n"),
-    );
-
-    return formattedMemories.join("\n\n");
-}
-
-export async function listCompactionSeeds(
-    tableFormat: boolean,
-): Promise<string> {
-    const memoriesDirectory = getValidatedMemoriesRootDirectory();
-
-    const tocSeedsDirectory = path.join(
-        memoriesDirectory,
-        "compactions",
-        "TOC_Seeds",
-    );
-
-    const availableFiles = (await fs.readdir(tocSeedsDirectory, {
-        withFileTypes: true,
-    }))
-        .filter(entry => entry.isFile())
-        .map(entry => entry.name)
-        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-
-    if (availableFiles.length === 0) {
-        return "No compaction seeds are available.";
-    }
-
-    const groupedFiles = new Map<string, string[]>();
-
-    for (const fileName of availableFiles) {
-        const baseFileName = fileName.replace(
-            /_c\d+_p\d+(?: - Copy)?\.json$/i,
-            "",
-        );
-
-        const existingFiles = groupedFiles.get(baseFileName) ?? [];
-        existingFiles.push(fileName);
-        groupedFiles.set(baseFileName, existingFiles);
-    }
-    
-    let index = 1;
-
-    if (!tableFormat) {
-        return availableFiles
-            .map((fileName, index) => `${index + 1}. ${fileName}`)
-            .join("\n");
-    }
-
-    const rows = [...groupedFiles.entries()].map(
-        ([baseFileName, fileNames]) => {
-            const numberedFiles = fileNames
-                .map(fileName => `${index++}. ${fileName}`)
-                .join("<br>");
-
-            return `| ${baseFileName} | ${numberedFiles} |`;
-        },
-    );
-
-    return [
-        '📦 **`Compaction List Package`**',
-        "| Base Name | Compaction Seed Files |",
-        "|---|---|",
-        ...rows,
-    ].join("\n");
-}
-
-export async function createCompactionSummary(
-    requestedFileName: string,
-):Promise<string> {
-    const memoriesDirectory = getValidatedMemoriesRootDirectory();
-
-    const compactionsDirectory = path.join(
-        memoriesDirectory,
-        "compactions",
-    );
-
-    const tocSeedsDirectory = path.join(
-        compactionsDirectory,
-        "TOC_Seeds",
-    );
-
-    const tocSummariesDirectory = path.join(
-        compactionsDirectory,
-        "TOC_Summaries",
-    );
-    
-    const availableFiles = (await fs.readdir(tocSeedsDirectory, {
-        withFileTypes: true,
-    }))
-        .filter(entry => entry.isFile())
-        .map(entry => entry.name)
-        .filter(name => /^.+_c\d+_p\d+\.json$/i.test(name));
-
-    const exactMatch = availableFiles.find(
-        name => name.toLowerCase() === requestedFileName.toLowerCase(),
-    ) ?? null;
-
-    if (exactMatch === null) return "";
-
-    const compactionSeedFile = path.join(
-        tocSeedsDirectory,
-        exactMatch,
-    );
-
-    const compactionSummaryFile = path.join(
-        tocSummariesDirectory,
-        exactMatch,
-    );
-
-    let modelReturnPackage: string;
-
-    // Checks if we've already made a cached version of the summary, send this instead of doing a new call to the model.
-    try {
-        const cachedSummary = await fs.readFile(
-            compactionSummaryFile,
-            "utf-8",
-        );
-
-        modelReturnPackage = JSON.parse(cachedSummary) as string;
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-            throw error;
-        }
-
-        const stringifiedMessages =
-            await promptProcessorConstructCompactionToInject(
-                compactionSeedFile,
-            );
-
-        modelReturnPackage =
-            await modelCallForOnDemandSummary(stringifiedMessages);
-
-        await fs.mkdir(tocSummariesDirectory, { recursive: true });
-
-        await fs.writeFile(
-            compactionSummaryFile,
-            JSON.stringify(modelReturnPackage),
-            "utf-8",
-        );
-    }
-
-    // Return the cached or newly generated summary.
-    return formatCompactionPackage(modelReturnPackage);
-}
-
-async function appendCompactionWarning(
-    conversation: any,
-    replacementText: string,
-    targetAssistantMessageIndex: number,
-): Promise<void> {
-
-    // Find the target assistant message for this MEC instance
-    const assistantMessage = conversation.messages[targetAssistantMessageIndex];
-
-    if (!assistantMessage) {
-        throw new Error("No assistant message found.");
-    }
-
-    // Get the currently selected version
-    const assistantVersion =
-        assistantMessage?.versions?.[
-            assistantMessage.currentlySelected ?? 0
-        ];
-
-    if (!assistantVersion) {
-        throw new Error("Assistant message has no versions.");
-    }
-
-    // Find the first message-number block, regardless of its number
-    const messageNumberIndex = assistantVersion.steps.findIndex(
-        (step: any) =>
-            step.type === "contentBlock" &&
-            step.content?.some(
-                (contentBlock: any) =>
-                    contentBlock.type === "text" &&
-                    /^\n\n\*\*\*message \d+\*\*\*$/.test(
-                        contentBlock.text,
-                    ),
-            ),
-    );
-
-    // Find debugInfoBlock
-    const debugInfoIndex = assistantVersion.steps.findIndex(
-        (step: any) => step.type === "debugInfoBlock",
-    );
-
-    // Avoid inserting the same replacement text more than once
-    const replacementExists = assistantVersion.steps.some(
-        (step: any) =>
-            step.type === "contentBlock" &&
-            step.content?.some(
-                (contentBlock: any) =>
-                    contentBlock.type === "text" &&
-                    contentBlock.text === replacementText,
-            ),
-    );
-
-    if (replacementExists) {
-        return;
-    }
-
-    // Prefer inserting before the message-number block.
-    // Otherwise, insert before debugInfoBlock.
-    // If neither exists, append to the end.
-    const insertIndex =
-        messageNumberIndex !== -1
-            ? messageNumberIndex
-            : debugInfoIndex !== -1
-                ? debugInfoIndex
-                : assistantVersion.steps.length;
-
-    // Create the replacement content block
-    const markerBlock = {
-        type: "contentBlock",
-        stepIdentifier: String(Date.now()),
-        content: [
-            {
-                type: "text",
-                text: replacementText,
-                fromDraftModel: false,
-                tokensCount: 1,
-                isStructural: false,
-            },
-        ],
-        defaultShouldIncludeInContext: false,
-        shouldIncludeInContext: false,
-    };
-
-    // Insert the replacement block
-    assistantVersion.steps.splice(insertIndex, 0, markerBlock);
-}
-
-interface CompactionSeed {
-    compactionSeed: string;
-    memorySeed: string;
-}
-
-export function extractCompactionMemorySeeds(
-    engrainCompaction: string,
-): CompactionSeed | null {
-    const match = engrainCompaction.match(
-        /^(.+_c\d+_p\d+\.json)\s*>>\s*([^/\\]+\/[^/\\]+\.json)$/i,
-    );
-
-    if (!match) {
-        return null;
-    }
-
-    return {
-        compactionSeed: match[1].trim(),
-        memorySeed: match[2].trim(),
-    };
-}
-
-async function addTocEngrainedFileName(
-    collections: TableOfCompactionsEntityCollection[],
-    collectionsFilePath: string,
-    compactionSeed: string,
-): Promise<void> {
-    // Add the compaction filename to today's engrained_fileName collection.
-    const now = new Date();
-
-    const today = [
-        now.getFullYear(),
-        String(now.getMonth() + 1).padStart(2, "0"),
-        String(now.getDate()).padStart(2, "0"),
-    ].join("-");
-
-    let todayCollection = collections.find(
-        entry => entry.date_created_group === today,
-    );
-
-    if (!todayCollection) {
-        todayCollection = {
-            date_created_group: today,
-            members_fileName: [],
-            engrained_fileName: [],
-        };
-
-        collections.push(todayCollection);
-    }
-
-    if (!todayCollection.engrained_fileName.includes(compactionSeed)) {
-        todayCollection.engrained_fileName.push(compactionSeed);
-    }
-
-    await fs.writeFile(
-        collectionsFilePath,
-        JSON.stringify(collections, null, 2),
-        "utf-8",
-    );
-}
-
-
-export async function validateIfAlreadyEngrained(
-    compactionSeed: string,
-): Promise<boolean | null> {
-    const memoriesDirectory = getValidatedMemoriesRootDirectory();
-
-    const collectionsFilePath = path.join(
-        memoriesDirectory,
-        "compactions",
-        "TOC_Collections.json",
-    );
-
-    try {
-        const collections: TableOfCompactionsEntityCollection[] =
-            JSON.parse(
-                await fs.readFile(collectionsFilePath, "utf-8"),
-            );
-
-        return collections.some(collection =>
-            collection.engrained_fileName.includes(compactionSeed),
-        );
-    } catch (error) {
-        console.error(
-            `[COMPACTION] Failed to check whether "${compactionSeed}" is already engrained:`,
-            error,
-        );
-
-        return null;
-    }
-}
-
+/**
+ * Used for pushing compaction seed content to an already existing memory seed
+ */
 export async function patchCompactedMemorySeed(
     extractedInputs: CompactionSeed,
 ): Promise<void>{
-    // Check if it is already engrained on any date
-    const engrained = await validateIfAlreadyEngrained(extractedInputs.compactionSeed);
-
-    if (engrained || engrained === null) return;
-
-    // If not yet engrained we need to 
     const memoryMatch = extractedInputs.memorySeed.match(
         /^([^/\\]+)\/([^/\\]+\.json)$/i,
     );
@@ -2020,4 +1688,445 @@ export async function patchCompactedMemorySeed(
             error,
         );
     }
+}
+
+/**
+ * Adds the compaction seed to the date group it was engrained on.
+ */
+async function addTocEngrainedFileName(
+    collections: TableOfCompactionsEntityCollection[],
+    collectionsFilePath: string,
+    compactionSeed: string,
+): Promise<void> {
+    // Add the compaction filename to today's engrained_fileName collection.
+    const now = new Date();
+
+    const today = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+    ].join("-");
+
+    let todayCollection = collections.find(
+        entry => entry.date_created_group === today,
+    );
+
+    if (!todayCollection) {
+        todayCollection = {
+            date_created_group: today,
+            members_fileName: [],
+            engrained_fileName: [],
+        };
+
+        collections.push(todayCollection);
+    }
+
+    if (!todayCollection.engrained_fileName.includes(compactionSeed)) {
+        todayCollection.engrained_fileName.push(compactionSeed);
+    }
+
+    await fs.writeFile(
+        collectionsFilePath,
+        JSON.stringify(collections, null, 2),
+        "utf-8",
+    );
+}
+
+/**
+ * Inserts a compaction message to the last assistant message.
+ * Ideally targets being inserted before the message # appended.
+ * If not it uses the same fallback as the message # appending, before debug and if not,
+ * after the last textblock type text of the asssitant.
+ * This message is shouldIncludeInContext: false, meaning like the message # will not be part of
+ * the context the assistant can process. It's just visually for the user.
+ */
+async function appendCompactionNotice(
+    conversation: any,
+    replacementText: string,
+    targetAssistantMessageIndex: number,
+): Promise<void> {
+
+    // Find the target assistant message for this MEC instance
+    const assistantMessage = conversation.messages[targetAssistantMessageIndex];
+
+    if (!assistantMessage) {
+        throw new Error("No assistant message found.");
+    }
+
+    // Get the currently selected version
+    const assistantVersion =
+        assistantMessage?.versions?.[
+            assistantMessage.currentlySelected ?? 0
+        ];
+
+    if (!assistantVersion) {
+        throw new Error("Assistant message has no versions.");
+    }
+
+    // Find the first message-number block, regardless of its number
+    const messageNumberIndex = assistantVersion.steps.findIndex(
+        (step: any) =>
+            step.type === "contentBlock" &&
+            step.content?.some(
+                (contentBlock: any) =>
+                    contentBlock.type === "text" &&
+                    /^\n\n\*\*\*message \d+\*\*\*$/.test(
+                        contentBlock.text,
+                    ),
+            ),
+    );
+
+    // Find debugInfoBlock
+    const debugInfoIndex = assistantVersion.steps.findIndex(
+        (step: any) => step.type === "debugInfoBlock",
+    );
+
+    // Avoid inserting the same replacement text more than once
+    const replacementExists = assistantVersion.steps.some(
+        (step: any) =>
+            step.type === "contentBlock" &&
+            step.content?.some(
+                (contentBlock: any) =>
+                    contentBlock.type === "text" &&
+                    contentBlock.text === replacementText,
+            ),
+    );
+
+    if (replacementExists) {
+        return;
+    }
+
+    // Prefer inserting before the message-number block.
+    // Otherwise, insert before debugInfoBlock.
+    // If neither exists, append to the end.
+    const insertIndex =
+        messageNumberIndex !== -1
+            ? messageNumberIndex
+            : debugInfoIndex !== -1
+                ? debugInfoIndex
+                : assistantVersion.steps.length;
+
+    // Create the replacement content block
+    const markerBlock = {
+        type: "contentBlock",
+        stepIdentifier: String(Date.now()),
+        content: [
+            {
+                type: "text",
+                text: replacementText,
+                fromDraftModel: false,
+                tokensCount: 1,
+                isStructural: false,
+            },
+        ],
+        defaultShouldIncludeInContext: false,
+        shouldIncludeInContext: false,
+    };
+
+    // Insert the replacement block
+    assistantVersion.steps.splice(insertIndex, 0, markerBlock);
+}
+
+/**
+ * MEC calls this function to append a returned compaction summary to overwrite the assistant's last message.
+ * There is a different function for appending the compaction trail.
+ */
+export async function tryAppendCompactionSummaryFunction(
+    latestConversation: any,
+    constructedTableString: string,
+    targetAssistantMessageIndex: number,
+): Promise<void> {
+
+    await editAssistantResponse(
+        latestConversation,
+        constructedTableString,
+        targetAssistantMessageIndex,
+    );
+}
+
+/**
+ * MEC calls on this function to add the compaction trail to the last assistant message.
+ * There is a different function for appending a compaction summary.
+ */
+export async function tryAppendTOCTrailFunction(
+    latestConversation: any,
+    matchingFiles: string[],
+    targetAssistantMessageIndex: number,
+): Promise<void> {
+    const lines: string[] = [];
+
+    interface CompactionPart {
+        fileName: string;
+        prefix: string;
+        compaction: number;
+        part: number;
+    }
+
+    const parseCompactionPart = (
+        fileName: string,
+    ): CompactionPart | null => {
+        const match = fileName.match(
+            /^(.*)_c(\d+)_p(\d+)\.json$/,
+        );
+
+        if (!match) {
+            return null;
+        }
+
+        return {
+            fileName,
+            prefix: match[1],
+            compaction: Number(match[2]),
+            part: Number(match[3]),
+        };
+    };
+
+    const parsedFiles = matchingFiles
+        .map(parseCompactionPart)
+        .filter(
+            (part): part is CompactionPart =>
+                part !== null,
+        );
+
+    const groups: CompactionPart[][] = [];
+
+    for (const part of parsedFiles) {
+        const lastGroup = groups[groups.length - 1];
+
+        const belongsToLastGroup =
+            lastGroup &&
+            lastGroup[0].prefix === part.prefix &&
+            lastGroup[0].compaction === part.compaction;
+
+        if (belongsToLastGroup) {
+            lastGroup.push(part);
+        } else {
+            groups.push([part]);
+        }
+    }
+
+    const orderedPartNames = groups
+        .map((group, index) => {
+            const isLast = index === groups.length - 1;
+
+            const firstFile = group[0].fileName;
+
+            const remainingParts = group
+                .slice(1)
+                .map((part) => `p${part.part}`);
+
+            const partsLabel = remainingParts.length > 0
+                ? ` *(PARTS: ${remainingParts.join(", ")})*`
+                : "";
+
+            const groupLabel = `${firstFile}${partsLabel}`;
+
+            return isLast
+                ? `${groupLabel} ➯ **[Current Session]**`
+                : groupLabel;
+        })
+        .join(" ➯ ");
+
+    const latestFileName =
+        matchingFiles[matchingFiles.length - 1];
+
+    const compactionCount = latestFileName
+        ? Number(
+            latestFileName.match(
+                /_c(\d+)_p\d+\.json$/,
+            )?.[1] ?? 0,
+        )
+        : 0;
+
+    lines.push(
+        [
+            `---`,
+            `🚨**This chat session has been compacted:** ***${compactionCount}*** previous times🚨`,
+            `**Latest Compaction File Name:** ${latestFileName ? `*${latestFileName}*` : ""}`,
+            `**Compaction Trail:** ${orderedPartNames}`,
+            `---`,
+        ].join("\n\n"),
+    );
+
+    await appendCompactionNotice(
+        latestConversation,
+        lines.join("\n\n"),
+        targetAssistantMessageIndex,
+    );
+}
+
+/**
+ * Checks today's date, then checks the TOC_Collections date_group to see if any date groups
+ * life time has exceeded the deleteTocCollectionsAfterNthDays setting set by the user.
+ * Any group that has exceeded that cutoff will be removed from the TOC and the members list
+ * will be used to scrub all associated files and entries.
+ */
+async function deleteExpiredCompactionsAndTocCleanup(
+    daysToTriggerExpire: number,
+): Promise<void> {
+    const memoriesDirectory = getValidatedMemoriesRootDirectory();
+
+    const compactionsDirectory = path.join(
+        memoriesDirectory,
+        "compactions",
+    );
+
+    const collectionsFilePath = path.join(
+        compactionsDirectory,
+        "TOC_Collections.json",
+    );
+
+    const tocSeedsDirectory = path.join(
+        compactionsDirectory,
+        "TOC_Seeds",
+    );
+
+    const tocEntityDirectory = path.join(
+        compactionsDirectory,
+        "TOC_Entity",
+    );
+
+    const tocSummariesDirectory = path.join(
+        compactionsDirectory,
+        "TOC_Summaries",
+    );
+
+    const now = new Date();
+    const today = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+    );
+
+    try {
+        const contents = await fs.readFile(
+            collectionsFilePath,
+            "utf-8",
+        );
+
+        const collections: TableOfCompactionsEntityCollection[] =
+            JSON.parse(contents);
+
+        const remainingCollections: TableOfCompactionsEntityCollection[] = [];
+        const expiredCollections: TableOfCompactionsEntityCollection[] = [];
+
+        for (const entry of collections) {
+            const [year, month, day] = entry.date_created_group
+                .split("-")
+                .map(Number);
+
+            const entryDate = new Date(year, month - 1, day);
+
+            if (Number.isNaN(entryDate.getTime())) {
+                remainingCollections.push(entry);
+                continue;
+            }
+
+            const ageInDays = Math.floor(
+                (today.getTime() - entryDate.getTime()) /
+                    (24 * 60 * 60 * 1000),
+            );
+
+            if (ageInDays > daysToTriggerExpire) {
+                expiredCollections.push(entry);
+            } else {
+                remainingCollections.push(entry);
+            }
+        }
+
+        for (const entry of expiredCollections) {
+            // Delete each member from the corresponding TOC collection group
+            for (const fileName of entry.members_fileName) {
+                // Delete the corresponding seed, if it exists
+                try {
+                    await fs.unlink(
+                        path.join(tocSeedsDirectory, fileName),
+                    );
+                } catch (error) {
+                    console.error(
+                        `[COMPACTION CLEANUP] Failed to delete "${fileName}":`,
+                        error,
+                    );
+                }
+
+                // Delete the corresponding cached summary, if it exists
+                try {
+                    await fs.unlink(
+                        path.join(tocSummariesDirectory, fileName),
+                    );
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                        console.error(
+                            `[COMPACTION CLEANUP] Failed to delete summary "${fileName}":`,
+                            error,
+                        );
+                    }
+                }
+            }
+
+            // Delete the corresponding TOC_Entity file
+            try {
+                await fs.unlink(
+                    path.join(
+                        tocEntityDirectory,
+                        `TOC_${entry.date_created_group}.json`,
+                    ),
+                );
+            } catch (error) {
+                console.error(
+                    `[COMPACTION CLEANUP] Failed to delete entity TOC for "${entry.date_created_group}":`,
+                    error,
+                );
+            }
+        }
+
+        if (expiredCollections.length > 0) {
+            await fs.writeFile(
+                collectionsFilePath,
+                JSON.stringify(remainingCollections, null, 2),
+                "utf-8",
+            );
+        }
+    } catch (error) {
+        console.error(
+            "[COMPACTION CLEANUP] Failed to clean up expired compactions:",
+            error,
+        );
+    }
+}
+
+/**
+ * Helper: extracts the compaction name and orders it to match the letters backwards.
+ * The compaction names are auto generated by lmstudio so it may contain spaces like "the pie was great_c1_p1.json"
+ * we needed to differentiate between a file of "the pie was great_c1_p1.json" and "was great_c1_p1.json"
+ */
+function extractCompactionFileName(
+    userText: string,
+    availableFiles: string[],
+): string | null {
+    const normalizedText = userText.trimEnd().toLowerCase();
+
+    const matchingFile = [...availableFiles]
+        .sort((a, b) => b.length - a.length)
+        .find(fileName => normalizedText.endsWith(fileName.toLowerCase()));
+
+    return matchingFile ?? null;
+}
+
+/**
+ * Helper: add the 📦 so that TOM/TOC retraction feature can Content Retracted the compaction related stuff.
+ */
+export function formatCompactionPackage(
+    packageText: string
+): string {
+    const formattedMemories: string[] = [];
+
+    formattedMemories.push(
+        [
+            '📦 **`Compaction Summary Package`**',
+            packageText,
+        ].join("\n"),
+    );
+
+    return formattedMemories.join("\n\n");
 }

@@ -22,10 +22,12 @@ import {
     enCompactionSeedExists, 
     extractCompactionMemorySeeds, 
     listCompactionSeeds,
-    patchCompactedMemorySeed
+    patchCompactedMemorySeed,
+    validateIfAlreadyEngrained
 } from "./tableOfCompactions";
 
 let alreadyTriggered = false;
+let engrainCompactionTimeout: ReturnType<typeof setTimeout> | undefined;
 
 export async function toolsProvider(
   ctl: ToolsProviderController
@@ -44,6 +46,21 @@ export async function toolsProvider(
             .test(engrainCompaction);
 
     if(isValidCompactionFileName) {
+        if (engrainCompactionTimeout) {
+            clearTimeout(engrainCompactionTimeout);
+        }
+
+        await new Promise<void>(resolve => {
+            engrainCompactionTimeout = setTimeout(resolve, 2000);
+        });
+
+        if (config.get("engrainCompaction") === engrainCompaction) {
+            await convertCompactionToMemorySeed();
+            engrainCompactionTimeout = undefined;
+        }
+    }
+
+    async function convertCompactionToMemorySeed():Promise<void>{
         if(alreadyTriggered === false) {
             alreadyTriggered = true;
 
@@ -51,6 +68,16 @@ export async function toolsProvider(
             const extractedInputs = extractCompactionMemorySeeds(engrainCompaction);
 
             if (extractedInputs !== null) {
+
+                // Check if it is already engrained on any date
+                // True = already engrained, False = not engrained, Null = error reading/parsing
+                const engrained = await validateIfAlreadyEngrained(extractedInputs.compactionSeed);
+
+                if (engrained || engrained === null) {
+                    alreadyTriggered = false;
+                    return;
+                }
+
                 const isValidCompactionSeed = await compactionSeedExists(extractedInputs.compactionSeed);
 
                 if(isValidCompactionSeed) {

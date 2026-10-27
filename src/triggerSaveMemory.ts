@@ -410,10 +410,9 @@ export async function editAssistantResponse(
         throw new Error("Could not find assistant response text.");
     }
 
-    // the appendinstead path is if we are applying the compaction trail to the
-    // first assistant's message. This removes the old trail and preserves the original user message
-    // Also the 🚨 should not cause this first assitant message to be filtered out as metadata
-    // because the appending only happens after the original message has been processed and saved to part1.
+    // Appended instead was originally made for the compaction trail, but I've taken a different
+    // approach and this current logic currently has no users, but will be left for maybe somewhere
+    // in the future something needs to be appended directly to the assistant's message.
     if (appendInstead) {
         const startMarker = textBlock.text.indexOf("🚨");
         const endMarker = textBlock.text.indexOf(
@@ -805,18 +804,22 @@ function isMetadataOnlyInput(
     );
 }
 
+/**
+ * Returns back if the assistant message had characters associated with
+ * the return package of the backend data. Prevents wasting processing power by excluding these matches.
+ */
 export function isMetadataOnlyOutput(output: string): boolean {
     const prefix = output.slice(0, 8);
 
     if (
         output.length <= 1 ||
         output.trim() === "Content Retracted" ||
-        prefix.includes("🚨") ||
         prefix.includes("📦") ||
         prefix.includes("⏳") ||
-        prefix.includes("✅") ||
-        prefix.includes("❌") ||
-        output.toLowerCase().includes("save memory mode")
+        prefix.includes("✅") ||                                // ⏳ should catch first. this is an extra layer for when the assistant generates the response using tools mode it the output may be unreliable
+        prefix.includes("❌") ||                                // ⏳ should catch first. this is an extra layer for when the assistant generates the response using tools mode it the output may be unreliable
+        prefix.includes("🚨") ||                                // currently unused.
+        output.toLowerCase().includes("save memory mode")       // ⏳ should catch first. this is an extra layer for when the assistant generates the response using tools mode it the output may be unreliable
     ) {
         return true;
     }
