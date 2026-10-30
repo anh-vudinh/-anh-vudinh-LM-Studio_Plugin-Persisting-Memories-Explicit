@@ -4,49 +4,46 @@
 
 - **Optional Companion Plugin** - [GitHub - Context Cleanup](https://github.com/anh-vudinh/LM-Studio_Context-Cleanup) | [LMStudio](https://lmstudio.ai/anhuvdinh/context-cleanup)
 
->**If you would like to look at the pictures, you can see them in the GitHub readme**
+>**If you would like to look at the pictures, you can see them in the GitHub readme.**
 
-Persisting Memories Plugin Explicit (Hybrid) is an LM Studio plugin that lets users preserve selected assistant responses as reusable memory seeds and inject those memories into future conversations. It stores memories as local JSON files, organizes them by category, and uses prompt preprocessing to add selected memories to the active prompt when needed.
+The Persisting Memories Explicit plugin (Hybrid) is an LM Studio plugin that lets users preserve selected assistant responses as reusable memory seeds and inject those memories into future conversations. It stores memories as local JSON files, organizes them by category, and uses prompt preprocessing to add selected memories to the active prompt when needed.
 
-- Tested working on Windows 11 Pro 25H2 - LM Studio 0.4.26
-(Pathing is relative and nothing should be hardcoded specifically for Windows; this should work with Linux and MacOS too.)
+- Tested working on Windows 11 Pro 25H2 | LM Studio 0.4.27
+(Pathing is relative and nothing should be hardcoded specifically for Windows; this should work with Linux and macOS too.)
 
-## Updated (10/27/2026)
-   - Spell checked readme.
+## Bugfix (10/29/2026)
+- My choice of correction on 10/27/2026 for the compaction seed conversion field checker implementation was flawed. I had forgotten that "await timeouts" do not play well with LM Studio's processing flow. Users who did not clear out the conversion field after they used it or did not break the full command apart would experience a 2-second delay after each new user message sent which was the await timeout holding things up. I've properly disconnected the conversion process now from the normal flow.
+   <details>
+   <summary>Click to expand image of TOC_ Collections</summary>
+   <img src="screenshots\TOC_Collections.jpg" alt="Image of TOC_Collections">
+   </details>
+   <br>
 
-   - Added comments and reorganized functions in TOC.ts
-   
-   - Fixed the compaction seed duplication checker and put a stability checker to it. There is now a 2 second timer to check if the client input is stable before accepting the parameters. Where the duplication checker comes into play is to check if the user has already converted that compaction seed to a memory seed. It will be an entry in the TOC_Collections > engrained_fileName. If the compaction seed's name is within any group it will not allow a duplicate save of the compaction seed. If you wish to reduplicate the compaction seed for whatever reason, then remove it's name from the engrained_fileName array. The stability checker comes into play for users who do not clear out the text field before typing a brand new conversion. Pretend you wanted to change the word hitters to hunters, when you went back to change it while leaving the .json part of the name intact, the memory name would probably be accepted as hiters as your were presing backspace to clear out the `it` letters to replace with `un`.
-      <details>
-      <summary>Click to expand image of TOC_ Collections</summary>
-      <img src="screenshots\TOC_Collections.jpg" alt="Image of TOC_Collections">
-      </details>
-      <br>
 
 ## Updated (10/26/2026)
 
 - Entire Readme has been updated to match the plugin's current state, so I highly encourage users to read it starting at [Configuration](#configuration). The functionality you knew of before remains the same, but there are many new additions. If you're interested in the technical bits, it can be read in the [Technical Details](#technical-details). The Technical Details will not alter how you engage with this plugin, but some users may find it nice to know what changes occurred under the hood to make this plugin reach its current state. The tooltips of the plugin have also been updated. Hover them for more information or if you forgot the commands associated with that feature.
 
-- I'll keep it short. The biggest change is that I've switched the final write action to a polling -> polling -> write method instead of the previous polling -> timeout -> write method. Sounds simple but it was a real pain to work out all the issues that came from transitioning over. This required me to make some big changes to the MEC to accommodate for the difference in timings and logic flow. The biggest benefit is now you can spam messages to the assistant, and any operation that you did not let the plugin resolve by waiting for the 2 seconds will be queued and resolved when you give it the opportunity. The previous method if you did not allow the 2 second grace period, the write actions for that turn were considered lost.
+- I'll keep it short. The biggest change is that I've switched the final write action to a polling -> polling -> write method instead of the previous polling -> timeout -> write method. Sounds simple but it was a real pain to work out all the issues that came from transitioning over. This required me to make some big changes to the MEC to accommodate for the difference in timings and logic flow. The biggest benefit is now you can spam messages to the assistant, and any operation that you did not let the plugin resolve by waiting for the 2-seconds will be queued and resolved when you give it the opportunity. With the previous method, if you did not allow the 2-second grace period, the write actions for that turn were considered lost.
    <details>
    <summary>Click to expand image of memory recall</summary>
    <img src="screenshots\retroactive-update.gif" alt="Image of new polling method effects">
    </details>
    <br>
 
-- The [Model Dependent Version](https://lmstudio.ai/anhuvdinh/persisting-memories) has been deprecated and fused into the explicit version. But don't worry if you liked the explicit version you can continue using it, and if you liked the model dependent version you can continue using it too. Now in the explicit version there is a toggle to choose which mode you wish to use. As always the explicit mode (tool call mode off) will give you reliable results and actions, every functionality is scripted; same input = same output. Tool Call Mode gives the assistant freedom to call tools as it wishes and display the results as it wishes. Although I have prompted it to try and return the results as given, which matches the output of my explicit functions, assistants may present the results in it's own self determined way.
+- The [Model Dependent Version](https://lmstudio.ai/anhuvdinh/persisting-memories) has been deprecated and fused into the Explicit version. But don't worry if you liked the Explicit version you can continue using it. If you liked the Model Dependent version you can continue using it too through the "Tool Call Mode?" toggle. Now in the Explicit version there is a toggle to choose which mode you wish to use. As always the Explicit mode (tool call mode off) will give you reliable results and actions, every functionality is scripted; same input = same output. Tool Call Mode gives the assistant freedom to call tools as it wishes and display the results as it wishes. Although I have prompted it to try and return the results as given, which matches the output of my Explicit functions, assistants may present the results in their own self-determined way.
    <details>
    <summary>Click to expand image of tool call toggle</summary>
    <img src="screenshots\tool-call-mode.jpg" alt="Image of tool call toggle">
    </details>
    <br>
 
-- QOL change: Made the `~/.lmstudio` folder location semi-dynamic. If your `.lmstudio` folder is in the default location, the plugin will have no problems pathing to the right folders. If you've moved your `.lmstudio` folder out of the default location of the User folder, this plugin will now locate the relative position of your `.lmstudio` root folder based off of the root folder of where this plugin lives.
+- QOL change: Made the `~/.lmstudio` folder location semi-dynamic. If your `.lmstudio` folder is in the default location, the plugin will have no problems pathing to the right folders. If you've moved your `.lmstudio` folder out of the default location of the User folder, this plugin will now locate the relative position of your `.lmstudio` root folder based on the root folder of where this plugin lives.
 
 ## Final Thoughts
 
 Probably the final big update. I am satisfied with this plugin's current state.
-As for my model dependent version I've decided to discontinue it. It will continue to work as-is from it's last version paired with an older version of the Context Cleanup Plugin.
+As for my Model Dependent version I've decided to discontinue it. It will continue to work as-is from its last version paired with an older version of the Context Cleanup Plugin.
 
 ## Table of Contents
 
@@ -73,13 +70,13 @@ These memories are stored in their respective files and can be injected into the
 
 From LM Studio Website: Install from the LM Studio Hub then enable the plugin.
 
-From GitHub Source Code: Open PowerShell/terminal, navigate to root folder of the plugin you downloaded where you see the README, package, and manifest. Enter `lms dev -i -y`. Plugin should now be available in LM Studio.
+From GitHub Source Code: Open PowerShell/terminal, navigate to the root folder of the plugin you downloaded where you can see the README, package, and manifest. Enter `lms dev -i -y`. Plugin should now be available in LM Studio.
 
 ## Typical Workflow
 
 1. Start a conversation in LM Studio.
 2. Copy and paste, from the `Available Memories`, one or more memory seeds into the `Memories to Inject` configuration field.
-3. Using prompt preprocessor, the plugin injects the `Memories to Inject` into the user's current turn.
+3. Using the prompt preprocessor, the plugin injects the `Memories to Inject` into the user's current turn.
 4. During the conversation, ask the assistant to save a specific message as a memory, using the specific trigger phrase `"save memory #"` (example: `save memory 5; category recipes; name chicken thighs`).
 5. Provide a `category` and `name` during the request or afterwards when asked.
 6. The plugin saves the assistant response, overall topic, user message, and date as a memory seed.
@@ -96,10 +93,10 @@ From GitHub Source Code: Open PowerShell/terminal, navigate to root folder of th
 | 🗑️ Delete Memory | `String` | Full name of the memory to delete. Deletion is permanent. Bubbles will not update until reinitialization — this is a UI limitation of LM Studio. |
 | Available Memories | `NONE` | Display-only: a list of available memories. Users can copy names from this list into **Memories to Inject** or **Delete Memory**. |
 | 🧠 Memories to Inject | `String` | Memories that should be injected into the current session. Only the listed memories persist through turns. |
-| 📝 Summarize Memory Injected | Boolean · `ON / OFF` | Instead of injecting the memory file contents verbatim, have the model summarize it's contents before injection. This will only affect memories injected while this option is toggled ON. |
-| 📦 Table of Memories | `NONE` | A simple reference to the TOM names incase you forget them. |
+| 📝 Summarize Memory Injected | Boolean · `ON / OFF` | Instead of injecting the memory file contents verbatim, have the model summarize their contents before injection. This will only affect memories injected while this option is toggled ON. |
+| 📦 Table of Memories | `NONE` | A simple reference to the TOM names in case you forget them. |
 | ⚙️ Initialize Table of Memories | Boolean · `ON / OFF` | Users are expected to toggle this ON and send a user message one time. This will create and build your TOM tables in the memories folder. After the TOMs are initialized keep the option toggled OFF unless you need to reinitialize the tables. |
-| ↩️ Retract TOMs & TOC older than `<N>` turns | Numeric · `0 = OFF, max 10`  | Replaces all TOM tables with 'Content Retracted' if they are not the <N>th newest assistant messages. This is to manage your context window. TOMs are supposed to just be a quick reference to locate your memories. You are expected to use the Memories to Inject feature to keep memories in context. |
+| ↩️ Retract TOM & TOC older than `<N>` turns | Numeric · `0 = OFF, max 10`  | Replaces all TOM tables with 'Content Retracted' if they are not the `<N>`th newest assistant messages. This is to manage your context window. TOMs are supposed to just be a quick reference to locate your memories. You are expected to use the Memories to Inject feature to keep memories in context. |
 | 🔥 Delete Compactions older than <N> days | Numeric · `0 = OFF, max 15` | Requires Context Cleanup Plugin: Will automatically delete compactions that are older than the days you set. This will also delete everything associated with that compaction. It's TOC_Entity, TOC_Summaries, TOC_Seeds, and TOC_Collections entry will all be cleared. |
 | 🌱 Compaction ➠ Memory Seed | `String` | Requires Context Cleanup Plugin: This is where you can engrain a compaction into a memory seed. Type in the full name of the compaction seed you wish to turn into a memory seed. Follow the expected format. |
 
@@ -110,7 +107,7 @@ From GitHub Source Code: Open PowerShell/terminal, navigate to root folder of th
 <img src="screenshots\tool-call-mode.jpg" alt="Image of tool call toggle">
 <br>
 
-Toggled OFF runs the explicit mode.
+Toggled OFF runs the Explicit mode.
    - Pros: 
       1. Reliable scripted outputs.
       2. Easier on the backend to filter out junk data from being saved.
@@ -119,40 +116,40 @@ Toggled OFF runs the explicit mode.
       5. The exact parameters you give are used.
       6. Faster to retrieve data. Goes from: command -> data fetch -> overwrite last assistant message.
    - Cons:
-      1. Nothing in regards to functionality. With my queuing systems and many retry/resolve functions added I've basically made a work around to offset the past trade off.
+      1. Nothing in regards to functionality. With my queuing systems and many retry/resolve functions added I've basically made a workaround to offset the past trade off.
       2. Cannot have model chain tool calls.
       3. You must remember the verbiage to the commands. I've made the commands very loose with many misspelling/shorthand alternatives already. They're also in the tooltips.
 
-Toggled ON runs the model dependent (tool calls) mode.
+Toggled ON runs the Model Dependent (tool calls) mode.
    - Pros:
       1. Chained tool calls. You can go from asking the model to recall a memory to fetching the exact memory file.
       2. You can use casual language to invoke tool calls.
    - Cons:
       1. Reliability depends entirely on the model. (I've tested and fine-tuned the tool descriptions until the models I play with behaved within reason)
       2. The randomness of the assistant's replies requires more allowance from the backend to filter out its junk outputs (I did what I could to influence something reliable to optimize this like using emojis)
-      3. The model can use parameters that it fabricates. (The model learns from patterns, based on the tool description it should ask for missing fields, but if you teach it the pattern that you're okay with it just using whatever parameters or if you repeat a parameter many times, it will begin to believe that when the user does not give parameters it means it should use the last know parameters.)
+      3. The model can use parameters that it fabricates. (The model learns from patterns, based on the tool description it should ask for missing fields, but if you teach it the pattern that you're okay with it just using whatever parameters or if you repeat a parameter many times, it will begin to believe that when the user does not give parameters it means it should use the last known parameters.)
       4. Patterns override hard rules.
       5. Doubling of context used. When results must be fetched it goes from: request -> data fetch -> return to model(payload) -> model returns to user(duplicated payload)
       6. Spamming tool calls, with the tools available to it, if it wants to dig through the memory summaries and dig all the way to retrieve memory file it can do so. If the assistant isn't satisfied or an error occurs it may try as many parameters as it wants until it's satisfied.
-      7. Data presentation varies. I literally handed the model a pre-formatted markdown table string with the tool directly asking to return it to the user that way. Yet assistant's may decide to feed you the raw string in a code block, display it properly, or extrapolate it into it's own text format. Even when I tested the directions in the return package, the assistant would often choose to ignore it.
+      7. Data presentation varies. I literally handed the model a pre-formatted markdown table string with the tool directly asking to return it to the user that way. Yet assistant's may decide to feed you the raw string in a code block, display it properly, or extrapolate it into its own text format. Even when I tested the directions in the return package, the assistant would often choose to ignore it.
 
-Do not take this Pros and Cons list as something to influence your decision of which version to use. Test both out yourself, Toggle ON or OFF, you can make that final choice. This list is just to lay out the nuances. Also by expanding my explicit version to allow for tool calls I've also given the "model dependent version"(the new toggle), better backend logic and functions to work with. These functions were made to be more advanced because the explicit version required them to be so. Now those improvements are also shared by the "model dependent version".
+Do not take this Pros and Cons list as something to influence your decision of which version to use. Test both out yourself, Toggle ON or OFF, you can make that final choice. This list is just to lay out the nuances. Also by expanding my Explicit version to allow for tool calls I've also given the "Model Dependent version"(the new toggle), better backend logic and functions to work with. These functions were made to be more advanced because the Explicit version required them to be so. Now those improvements are also shared by the "Model Dependent version".
 
 ### Memory Injection
 
 1. Inject a single memory by copying it's `<category>/<name>.json` into the Memories to Inject field.
 
 2. Inject all memories within a category by using a `*` wildcard, `<category_folder>/*.json`.
-   Users will not be allowed to create a fle named `*` or `*.json` to protect this feature. (memory/file names like `few*many` will be allowed)
+   Users will not be allowed to create a file named `*` or `*.json` to protect this feature. (memory/file names like `few*many` will be allowed)
    <details>
-   <summary>Click to expand Picture of batch inject wild card.</summary>
-   <img src="screenshots\memory-seed-wildcard.jpg" alt="Image of batch inject wild card">
+   <summary>Click to expand Picture of batch inject wildcard.</summary>
+   <img src="screenshots\memory-seed-wildcard.jpg" alt="Image of batch inject wildcard">
    </details>
    <br>
 
-3. Users can have the model summarize their selected Memories to Inject by toggling it's option ON prior to adding the memory seed and sending their user message. This will reduce the tokens used footprint but may lose finer details compared to injecting the raw memory seed. Can be useful if you decided to compile multiple parts of a compaction seed into one memory seed, but it might take awhile to generate the summary.
+3. Users can have the model summarize their selected Memories to Inject by toggling its option ON prior to adding the memory seed and sending their user message. This will reduce the token footprint but may sacrifice some finer details compared to injecting the raw memory seed. Can be useful if you decided to compile multiple parts of a compaction seed into one memory seed, but it might take a while to generate the summary.
    <details>
-   <summary>Click to expand Picture of batch inject wild card.</summary>
+   <summary>Click to expand Picture of batch inject wildcard.</summary>
    <img src="screenshots\summarize-memory-injected.jpg" alt="Image of summarize memory toggle">
    </details>
    <br>
@@ -161,7 +158,7 @@ Do not take this Pros and Cons list as something to influence your decision of w
 
 When the user sees a message they wish to keep as a memory, they can call on the `save_memory` tool by saying this to the assistant:
 
-1. Single memory save. User says: `save memory #; category <category_name>; name <memory_name>`. (Refer to REGEX for allowed verbage)
+1. Single memory save. User says: `save memory #; category <category_name>; name <memory_name>`. (Refer to REGEX for allowed verbiage)
    - Usable delimiters are `;` or `,` or `.`
    - Prefixes like `category` and/or `name` are required.
    <details>
@@ -201,23 +198,23 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 3. To delete a whole category by using a `*` wildcard: `<category_folder>/*.json`. This removes the whole folder, there is no recovery.
    <details>
-   <summary>Click to expand Picture of category wild card delete.</summary>
+   <summary>Click to expand Picture of category wildcard delete.</summary>
    <img src="screenshots\category-wildcard-delete.jpg" alt="Image of wildcard delete">
    </details>
    <br>
 
 ## Table of Memories
 
-**The TOMs feature is not a replacement for the Memories to Inject feature. TOMs should be use as a feature to help you locate or figure out which memory you want to inject, not to keep memories in context.**
+**The TOMs feature is not a replacement for the Memories to Inject feature. TOMs should be used to help you locate or identify which memories you want to inject, not to keep memories in context.**
 
-1. **Initialize Table of Memories:** This is extremely important you toggle ON the `Initialize Table of Memories` at least once and send a user message. The content of that message does not matter. The purpose of the toggle is to create the TOM_A-J, TOM_K-Q, and TOM_R-Z files. These files will house summaries and meta data of the memories you've created. If you created memory seeds with an earlier version of my plugin this toggle will populate those older memories into their respective TOMs.
+1. **Initialize Table of Memories:** It is extremely important that you toggle ON the `Initialize Table of Memories` at least once and send a user message. The content of that message does not matter. The purpose of the toggle is to create the TOM_A-J, TOM_K-Q, and TOM_R-Z files. These files will house summaries and metadata of the memories you've created. If you created memory seeds with an earlier version of my plugin this toggle will populate those older memories into their respective TOMs.
    <details>
    <summary>Click to expand image of tom file</summary>
    <img src="screenshots\example-of-tom-file.jpg" alt="Image of tom file">
    </details>
    <br>
 
-2. **Table of Memories Lookup:** You can ask the assistant to retrieve the respective TOM by their fully name or shorthand version of their name. (Refer to TOM REGEX for allowed verbiage)
+2. **Table of Memories Lookup:** You can ask the assistant to retrieve the respective TOM by their full name or shorthand version of their name. (Refer to TOM REGEX for allowed verbiage)
    <details>
    <summary>Click to expand image of direct lookup of TOM contents</summary>
    <img src="screenshots\table-of-memories-lookup.jpg" alt="Image of direct lookup of TOM contents">
@@ -236,7 +233,7 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
    </details>
    <br>
 
-4. **Table of Memory Direct Memory Fetch:** Users may ask the assistant to fetch a specific memory json. The exact command is `fetch memory <category_name>/<file_name>.json`. This is the minimum structure. Look at the Regex picture for optional verbiage. Wildcard `*` behavior is also allowed, this will display to you a table of all the memory files within that category.
+4. **Table of Memory Direct Memory Fetch:** Users may ask the assistant to fetch a specific memory JSON file. The exact command is `fetch memory <category_name>/<file_name>.json`. This is the minimum structure. Look at the Regex picture for optional verbiage. Wildcard `*` behavior is also allowed, this will display to you a table of all the memory files within that category.
    <details>
    <summary>Click to expand image of direct memory fetch</summary>
    <img src="screenshots\direct-memory-fetch.jpg" alt="Image of direct memory fetch">
@@ -261,11 +258,11 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 **This is specifically a cross plugin feature with Context Cleanup rev8+ from LM Studio or v4.0+ from GitHub. If you do not have the proper version of them currently running together, these cross plugin features will not work.**
 
-<img src="screenshots\cc-control-panel.jpg" alt="Image of context cleanup control panel">
+<img src="screenshots\cc-control-panel.jpg" alt="Image of Context Cleanup control panel">
 
 1. **Threshold to auto cleanup:** This setting is the starting point of allowing the compaction feature. While this is enabled [100 = disabled] it will block the Keep first and Keep last truncation. When you've passed the threshold your messages will be truncated down to the setting of your keep first and keep last. This is required to be enabled to use the Compact a Memory feature.
 
-2. **Compact a Memory after Threshold Truncation:** If this is enabled and you've met all requirements to compact a memory, when you've reached the threshold to auto clean up the Context Cleanup plugin will create a `.copy` of your chatMessage history stored right next to your `<file_name>.conversation.json` within the conversation folder. The Persisting Memories Explicit plugin will after every turn check that folder to see if a `.copy` ever appeared. When it does the PM-E will use the contents of that file to create a compaction seed and delete the `.copy` once it's finished. That data will now be organized in your `~/.lmstudio/memories/compactions` folder.
+2. **Compact a Memory after Threshold Truncation:** If this is enabled and you've met all requirements to compact a memory, when you've reached the threshold to auto clean up the Context Cleanup plugin will create a `.copy` of your chatMessage history stored right next to your `<file_name>.conversation.json` within the conversation folder. After every turn, the Persisting Memories Explicit plugin will check that folder to see if a `.copy` ever appeared. When it does the PM-E will use the contents of that file to create a compaction seed and delete the `.copy` once it's finished. That data will now be organized in your `~/.lmstudio/memories/compactions` folder.
 
 3. **Compaction Folders:** These are the file and folders important to the compaction feature.
    - ***TOC_Collections:*** Holds the compaction seed membership belonging to which day. This way they can be auto deleted.
@@ -295,7 +292,7 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
    </details>
    <br> 
 
-7. **Compaction Warning & Trail:** The Context Cleanup plugin will ask the assistant to warn the user when they've approached the auto context cleanup threshold with compaction enabled. The persisting memories explicit plugin will begin compaction at the beginning of the following turn and append a compaction trail message to the lastest assistant message.
+7. **Compaction Warning & Trail:** The Context Cleanup plugin will ask the assistant to warn the user when they've approached the auto Context Cleanup threshold with compaction enabled. The persisting memories Explicit plugin will begin compaction at the beginning of the following turn and append a compaction trail message to the latest assistant message.
    <details>
    <summary>Click to expand image of compaction warning and trail</summary>
    <img src="screenshots\compaction-warning-and-trail.jpg" alt="Image of compaction warning and trail">
@@ -307,11 +304,11 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 9. **Injecting a Summarized Version of the Former Compaction Seed:** If you chose the route of merging multiple compaction parts into one memory seed you can consider using the 📝 Summarize Memory Injected feature to try and condense that memory seed while you inject it. It should reduce it down to be bearable compared to injecting the raw converted compaction seed.
 
-10. **Compaction auto delete:** You can set the number of days that should pass before a compaction date group(compactions will belong to the date group of the date they were created) is auto deleted. If you set the value to 7, when any group becomes older than 7 days, all their related compaction files will be deleted. This way you compaction seeds aren't forever growing.
+10. **Compaction auto delete:** You can set the number of days that should pass before a compaction date group(compactions will belong to the date group of the date they were created) is auto deleted. If you set the value to 7, when any group becomes older than 7 days, all their related compaction files will be deleted. This way, your collection of compaction seeds won't grow indefinitely.
 
 ## Conversation Numbering
 
-- The plugin will append a message # after each of the assistant's responses. This numbering makes it easier for users to refer to a specific exchange when asking to save a memory. The improved explicit version should append to every assistant message eventually. Users spamming the assistant with messages should no longer lose the turn to write. Use the appending of the message # as the visual signal that the backend has finished all it's processing.
+- The plugin will append a message # after each of the assistant's responses. This numbering makes it easier for users to refer to a specific exchange when asking to save a memory. The improved Explicit version should append to every assistant message eventually. Users spamming the assistant with messages should no longer lose the turn to write. Use the appending of the message # as the visual signal that the backend has finished all it's processing.
 
    <img src="screenshots\chat-message-N.jpg" alt="Image of Chat Message">
 
@@ -320,11 +317,11 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 > NEW SECTION
 - **Backend Processing Finished Signal:** Now that the message # appending is reliable to even apply to past queued messages, you can now rely on that as the indicator the backend has caught up and performed it's work. This is very important to note because the assistant may want to hallucinate information to you and trick you into believing that was actually backend data presented. If you have run a TOM or Save command and see the assistant's thinking block and lacking a message # appended you are most likely looking at something the assistant concocted on it's own. Whatever it responded will be replaced shortly with the correct text.
 
-- **Read/Parse Conversation File Retries:** Because accessing the conversation file is important I've now implemented some retry functions to try and recover a failed read/parse attempt. This way if the plugin is trying to read the file while the assistant is actively altering it, it won't throw and error, give up immediately, and consider the write turn lost.
+- **Read/Parse Conversation File Retries:** Because accessing the conversation file is important I've now implemented some retry functions to try and recover a failed read/parse attempt. This way if the plugin is trying to read the file while the assistant is actively altering it, it won't throw an error, give up immediately, and consider the write operation lost.
 
-- **No More Timeout Method:** Moved away from polling (assistant finished updating conversation file) → timeout (2 seconds) → WRITE. This method when the user started typing a new message immediately without giving a 2 second grace period after the assistant finished responding would cause some write actions to not resolve on that current turn. These functions were the message # appending, the removal of memory seeds, the insertions of the save memory mode text, and the insertion of the new TOM tables. Why it worked before is I had the assistant relay to the user a message like `pending save memory...` which gave time to replace the assistant's last message and acted as the "wait" timer for the user. But imagine the scenario where the assistant learns the pattern and instead of displaying the expected `pending save memory...` it hallucinates the request for missing fields or pretends to "save" the memory. Which the user then would just engage as they would. Usually it was fine, as long as the parameters were given, but rare times not. Long story short I switched to polling (assistant finished updating) → polling (user stopped typing) → WRITE.
+- **No More Timeout Method:** Moved away from polling (assistant finished updating conversation file) → timeout (2-seconds) → WRITE. This method when the user started typing a new message immediately without giving a 2-second grace period after the assistant finished responding would cause some write actions to not resolve on that current turn. These functions were the message # appending, the removal of memory seeds, the insertions of the save memory mode text, and the insertion of the new TOM tables. Why it worked before is I had the assistant relay to the user a message like `pending save memory...` which gave time to replace the assistant's last message and acted as the "wait" timer for the user. But imagine the scenario where the assistant learns the pattern and instead of displaying the expected `pending save memory...` it hallucinates the request for missing fields or pretends to "save" the memory. Which the user then would just engage as they would. Usually it was fine, as long as the parameters were given, but rare times not. Long story short I switched to polling (assistant finished updating) → polling (user stopped typing) → WRITE.
 
-- **Polling UserInput Stability Method:** There are two players who can destabilize the conversation file, the assistant and the user. Previously I only accounted for the assistant. To make this work I deduced that the user typing also destabilized the conversation file and worked around that too. The new polling method allows users to continue with their conversation if they don’t feel like giving the 2 second grace period. In the backend the operations will continue to queue up, and when the user eventually gives the 2 second grace period, all the operations will be resolved together in one write action.
+- **Polling UserInput Stability Method:** There are two players who can destabilize the conversation file, the assistant and the user. Previously I only accounted for the assistant. To make this work I deduced that the user typing also destabilized the conversation file and worked around that too. The new polling method allows users to continue with their conversation if they don’t feel like giving the 2-second grace period. In the backend the operations will continue to queue up, and when the user eventually gives the 2-second grace period, all the operations will be resolved together in one write action.
    <details>
    <summary>Click to expand image of memory recall</summary>
    <img src="screenshots\retroactive-update.gif" alt="Image of new polling method effects">
@@ -339,9 +336,9 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 - **Removing Consumed TOMs & TOCs efficiently:** With my new feature to remove old TOMs you have "consumed" in the chat, I've stored within the config.ts the last index that was checked to scrub the latest TOM. That index as long as it remains usable in memory will act as the start point to the next cleanup cycle. This way resources are spared from iterating from the very beginning of the conversation. But again I must reiterate that LMS loves to disconnect plugins during idle or errors, if the plugin is reinitialized that shortcut value will be lost and must be reestablished after a new cycle starting from the beginning of the file.
 
-- **Power of the Emojis:** `🚨 📦 ⏳ ✅ ❌` These emojis if they appear in the first 8(+2 UTF) characters of the assistant message will make that assistant message ineligible for saving. What you can do with this knowledge is if you are planning to do a batch memory save, and there are certain assistant messages you wish to exclude rather than calling the save in multiple batches is for you to edit the assistant's message and put one of these emojis at the very beginning. The backend will spot the emoji and skip that message from saving. 📦 emoji has an additional function of having it's content retracted  if the feature is enabled.
+- **Power of the Emojis:** `🚨 ⏳ ✅ ❌ 📦` These emojis if they appear in the first 8(+2 UTF) characters of the assistant message will make that assistant message ineligible for saving. What you can do with this knowledge is if you are planning to do a batch memory save, and there are certain assistant messages you wish to exclude rather than calling the save in multiple batches is for you to edit the assistant's message and put one of these emojis at the very beginning. The backend will spot the emoji and skip that message from saving. 📦 emoji has an additional function of having it's content retracted  if the feature is enabled.
 
-- **More Flexible AcquireLock:** Previously the lock I created allowed ownership once per function. That was fine when I only ran MEC once, but with the transition to allowing for multiple queued MECs each instance then lacked a unique identity. When MEC1 finished it's job it would release it's lock even if MEC2 was still in queue. This happened because they both registered themselves as MEC. So to fix this I gave each instance it's own suffix which allowed them to utilize the lock system after I added (you guessed it) another "queue" or array which allows multiple owners to own the same lock function.
+- **More Flexible AcquireLock:** Previously the lock I created allowed ownership once per function. That was fine when I only ran MEC once, but with the transition to allowing for multiple queued MECs each instance then lacked a unique identity. When MEC1 finished it's job it would release it's lock even if MEC2 was still in queue. This happened because they both registered themselves as MEC. So to fix this I gave each instance its own suffix which allowed them to utilize the lock system after I added (you guessed it) another "queue" or array which allows multiple owners to own the same lock function.
 
 - **Save Command Timeout Continuation/Recovery:** If your last action was trying to save a memory and your plugin timed out/reinitialized, you walked away, or the in memory values lost their state, there is potential to re-enter you into the save memory mode as long as the assistant's last message to you contained the '⏳ **`SAVE MEMORY MODE`**' tag. The values in the `known -` field will be the bookmark of your last incomplete values. This is more of a convenience QOL feature, it's about the flow, because sure you could just type the whole save command properly. This QOL feature allows you to start a save command, walk away or switch tabs and browse the internet for 18 seconds (which is the idle time limit to disconnect plugins) and come back and provide the missing fields.
    <details>
@@ -350,14 +347,14 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
    </details>
    <br>
 
-- **No More Saving Save Commands To Memory:** In the pursuit of freedom to do whatever, even do odd things, I left the door open for users to save command outputs to a memory seed. I decided to retract that option and close that door to save processing power. My goal to make this explicit version perform better took precedence.
+- **No More Saving Save Commands To Memory:** In the pursuit of freedom to do whatever, even do odd things, I left the door open for users to save command outputs to a memory seed. I decided to retract that option and close that door to save processing power. My goal to make this Explicit version perform better took precedence.
    <details>
    <summary>Click to expand image of save message rejection</summary>
    <img src="screenshots\reject-save-messages.jpg" alt="Image of save message rejection">
    </details>
    <br>
 
-- **ROLEPLAY Tag:** I got better results for model compliance by using a roleplay tag. With the roleplay tag I saw that the model was more willing to "play along". Although on rare occasions it playing along would allow it to hallucinate as though it was directly using a save memory system or TOM look up system by regurgitating old data in the chat session. Regardless that data would be replaced by the backend with the correct information. It's just a loss of time waiting for the assistant to finish up it's hallucinated response. 
+- **ROLEPLAY Tag:** I got better results for model compliance by using a roleplay tag. With the roleplay tag I saw that the model was more willing to "play along". Although on rare occasions it playing along would allow it to hallucinate as though it was directly using a save memory system or TOM lookup system by regurgitating old data in the chat session. Regardless that data would be replaced by the backend with the correct information. It's just a loss of time waiting for the assistant to finish up it's hallucinated response. 
 
 - **On Hover Tool Tips Enhanced:** The tooltips have been revamped to be more helpful. Tooltips on hover will display to you a reminder of what the commands are for that specific feature.
 
@@ -367,29 +364,27 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 - **TOMs & TOCs Removal Combined:** The logic to remove TOCs is piggybacked off the TOMs removal logic. Meaning that The retraction setting now applies to message payloads. 
 
-- **Last Assistant Message Preserved After Compaction:** I put a prompt preprocessor for the assistant to remember to answer the last user message so it doesn't just waste a turn to just warn the user of compaction commencing on the next turn. I also preserved the assistant's next turn message rather than fully overwriting it with the Compaction Trail message. This way you do not lose a turn and have to repeat your question to the assistant.
-
 - **Compaction Trail:** At first I envisioned making the compaction trail something the assistant could work backwards from to retrieve compactions into context if it thought those compactions had data it needed, but I discarded that feature. Nothing would have been able to stop a bad assistant from crawling and pulling back everything into context just because it felt like it. So now the compaction trail is just a visual for users, it's not even considered as part of the context that the assistant can interact with. If you wish to make a compaction relevant covert it to a memory seed, and then anything you could do with a memory seed you can do with that former compaction seed.
 
-- **Maximum Optimization Tradeoff:** By incorporating the model dependent tool calls into this explicit version, I've had to slightly "unoptimized" some functions and take some actions to try and influence the model to output something my plugin could latch onto. I found this in the form of emojis. At first I was using the emojis for the explicit version because I thought it made it look nicer, but when I found out the output of the model couldn't be relied on, I tested emojis within the return package and found out if the return package contained an emoji the assistant was more than likely going to use that exact emoji in it's response. So basically instead of just locating the emoji as the first character, my backend logic now needs to search the first 10-20 characters. If my explicit version could expect to find a tag in the first few words, the tool calls version may need to check the entire string. So that is the basic trade off.
+- **Maximum Optimization Tradeoff:** By incorporating the Model Dependent tool calls into this Explicit version, I've had to slightly "unoptimized" some functions and take some actions to try and influence the model to output something my plugin could latch onto. I found this in the form of emojis. At first I was using the emojis for the Explicit version because I thought it made it look nicer, but when I found out the output of the model couldn't be relied on, I tested emojis within the return package and found out if the return package contained an emoji the assistant was more than likely going to use that exact emoji in it's response. So basically instead of just locating the emoji as the first character, my backend logic now needs to search the first 10-20 characters. If my Explicit version could expect to find a tag in the first few words, the tool calls version may need to check the entire string. So that is the basic trade off.
 
-- **.Ready File Creation:** The ready file is no longer a signal to say that PM-E has caught up in it's processing life cycle. Its purpose now is to be a signal that PM-E has finished it's life cycle. Context Cleanup plugin will use the ready file as a signal to now begin it's process rather than wait for the .lock file to be removed.
+- **.Ready File Creation:** The ready file is no longer a signal to say that PM-E has caught up in it's processing lifecycle. Its purpose now is to be a signal that PM-E has finished it's lifecycle. Context Cleanup plugin will use the ready file as a signal to now begin it's process rather than wait for the .lock file to be removed.
 
-- **Stale .Ready File Cleanup:** At first I decided against making a cleaner for stale ready files where you deleted the chat session before context cleanup got a chance to consume the ready file. They were 0KB files and just sitting there, no real harm other than making the conversation folder look cluttered. I changed my mind in favor of tidiness and have added a low processing jerry rigged stale ready file cleanup. For the first 1 minute of every 30 minutes the plugin will check the conversation folder for any ready file older than 10 seconds and remove them. That's at least 48 checks in 24 hours I figure eventually users would land within that window. I could have added a toggle but my plugin control panel is getting too cluttered.
+- **Stale .Ready File Cleanup:** At first I decided against making a cleaner for stale ready files where you deleted the chat session before Context Cleanup got a chance to consume the ready file. They were 0KB files and just sitting there, no real harm other than making the conversation folder look cluttered. I changed my mind in favor of tidiness and have added a low processing jerry rigged stale ready file cleanup. For the first 1 minute of every 30 minutes the plugin will check the conversation folder for any ready file older than 10 seconds and remove them. That's at least 48 checks in 24 hours I figure eventually users would land within that window. I could have added a toggle but my plugin control panel is getting too cluttered.
 
 - **Refactoring:** 
-   - Removed some of states that the timeout method needed to operate properly which this new polling/polling method does not need to consider.
+   - Removed some states that the timeout method needed to operate properly which this new polling/polling method does not need to consider.
    - Refactored all the hardcoded TOM ranges to a single variable point in config.ts.
    - Added markdown symbols to the Save Memory Model to make it more visually digestible.
    - TOM prompts to let the model know it's okay to return nothing.
    - A few functions now return booleans instead of void. These booleans are serving as a success or failure signal.
 
-- **Bugfix?** There was an issue where I could force an edge case scenario where if I spammed the assistant, overloaded it, stalled it, or did very out of the ordinary/unrealistic user behaviors I could get the plugin to fail to register the conversation file name or have read and parse errors. However after adding my additional read/parse recovery methods and silent failure on acquiring the CFN during the scan, and to giving it one more attempt to acquire it at the beginning of the MEC process, I have not been able to encounter those errors again. So I don't know if I really fixed it or not. All I know is it hasn't happened at all during my testing and use over the past days. One factor of the failure comes from empty.conversation.json, this empty.converstion.json is created when you use the chat session that is auto created after loading a model. With properly created files UNIX_timestamped.conversation.json, I don't think I ever saw that problem.
+- **Bugfix?** There was an issue where I could force an edge case scenario where if I spammed the assistant, overloaded it, stalled it, or did very out of the ordinary/unrealistic user behaviors I could get the plugin to fail to register the conversation file name or have read and parse errors. However after adding my additional read/parse recovery methods and silent failure on acquiring the CFN during the scan, and giving it one more attempt to acquire it at the beginning of the MEC process, I have not been able to encounter those errors again. So I don't know if I really fixed it or not. All I know is it hasn't happened at all during my testing and use over the past days. One factor of the failure comes from empty.conversation.json, this empty.conversation.json is created when you use the chat session that is auto created after loading a model. With properly created files UNIX_timestamped.conversation.json, I don't think I ever saw that problem.
 
 > OLD SECTION
 - **Multi-Edit Coordinator:** The function that consolidates all the write functions so they can be executed at a single place and at a single time.
 
-- **Read File for Context Cleanup Plugin:** This plugin will create a `<file_name>-persisting-memories-final-write.ready` file to give the greenlight to the context Cleanup plugin that it's operations are done. CC will then proceed with it's operations.
+- **Read File for Context Cleanup Plugin:** This plugin will create a `<file_name>-persisting-memories-final-write.ready` file to give the green light to the Context Cleanup plugin that it's operations are done. CC will then proceed with it's operations.
 
 - **Lock File:** This plugin will create a `<file_name>.lock` file to protect the conversation file while it's being updated. Currently in this system as it has evolved it may be just a safeguard not currently doing much other than protecting `ChatSessionConversationRelationship` which is low priority. The Contect Cleanup plugin is already now regulated to waiting to consuming the ready file, and the write functions have all been consolidated to the MEC who is now directing things through a write queue FIFO and last person is responsible for the final write structure.
 
@@ -399,7 +394,7 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 - **Internal ChatID (ICID):**: Unix_Timestamp ID which will appended by the prompt preprocessor. This `[ICID]` will allow the plugin to find which conversation file is associated with the specific chat session.
 
-- **Conversation Mapping:** The plugin stores a relationship file `ChatSessionConversationRelationship.json` in `~/.lmstudio/conversations`. This is a mapping of the relationship between the `ICID` and `conversation file`. It keeps only the newest 15 relationships so the file size stays small and serves as a quick and cheap look up resource to re-establish the paired relationship. LM Studio reinitializes and disconnects plugins regularly so storing these values in memory is impossible for reliability.
+- **Conversation Mapping:** The plugin stores a relationship file `ChatSessionConversationRelationship.json` in `~/.lmstudio/conversations`. This is a mapping of the relationship between the `ICID` and `conversation file`. It keeps only the newest 15 relationships so the file size stays small and serves as a quick and cheap lookup resource to re-establish the paired relationship. LM Studio reinitializes and disconnects plugins regularly so storing these values in memory is impossible for reliability.
 
 - **Memory Seed Names:** Memory names are normalized, but not to correct misspellings. It's easiest to copy and paste the memory name from the list displayed in `Available Memories` into the text field of `Memories to Inject`. Make sure you've copied the full memory name including the `.json`.
 
@@ -414,8 +409,8 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
    3. **Real-time conversation.json editing** — most complex method, I had to figure out many things about the quirks of how LM Studio Chat functions. Even the exact timing when the conversation file could be edited became a hidden factor.
 
-- Injected context will be hidden from the user, but visible to the assistant. User can ask the assistant to read out the injected memory if you wish to see it. Just know that making the assistant read it out will basically now have that content within your preprocessed message and the assistant's reply which basically is doubling the context window used for 1 piece of duplicated data.
+- Injected context will be hidden from the user, but visible to the assistant. User can ask the assistant to read out the injected memory if you wish to see it. Just know that making the assistant read it out will basically now have that content within your preprocessed message and the assistant's reply which effectively doubles the context window usage for that piece of re-duplicated data.
 
 - LM Studio's SDK does not have full support to make this implementation easy. The methods chosen to accomplish this feature were mandatory during the time of creation of this plugin.
 
-- The plugin assumes LM Studio conversation files are accessible under the configured root directory at `~/.lmstudio/conversations`. Regardless I did not hardcode paths, the paths are all relative to the default folders of LM Studio.
+- The plugin assumes LM Studio conversation files are accessible under the configured root directory at `~/.lmstudio/conversations`. Regardless, I did not hardcode paths, the paths are all relative to the default folders of LM Studio.

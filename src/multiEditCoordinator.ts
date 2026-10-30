@@ -800,7 +800,7 @@ export async function cleanupStaleReadyFiles(): Promise<void> {
     const now = new Date();
     const minute = now.getMinutes();
     const second = now.getSeconds();
-    console.log(conversationsDirectory, now, minute)
+    // console.log(conversationsDirectory, now, minute)
     // Run only during 00:00–00:59 and 30:00–30:59 each hour.
     if (
         !(

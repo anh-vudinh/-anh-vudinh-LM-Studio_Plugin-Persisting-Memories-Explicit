@@ -26,8 +26,11 @@ import {
     validateIfAlreadyEngrained
 } from "./tableOfCompactions";
 
+let latestEngrainCompaction = "";
+let lastProcessedEngrainCompaction = "";
 let alreadyTriggered = false;
-let engrainCompactionTimeout: ReturnType<typeof setTimeout> | undefined;
+let engrainCompactionChanged = false;
+let engrainCompactionPoller: ReturnType<typeof setInterval> | undefined;
 
 export async function toolsProvider(
   ctl: ToolsProviderController
@@ -37,67 +40,41 @@ export async function toolsProvider(
     const memoryFileToDelete = config.get("deleteMemorySeedsFile") as string;
     const enableToolsMode = config.get("enableToolsMode") as boolean;
     const engrainCompaction = config.get("engrainCompaction") as string;
+    latestEngrainCompaction = engrainCompaction;
+    engrainCompactionChanged = true;
 
     //------------------------------------------------------------------------
     // CREATE ENGRAINED COMPACTION SEED
     //------------------------------------------------------------------------
-    const isValidCompactionFileName =
-        /^.+_c\d+_p\d+\.json\s*>>\s*[^/\\]+\/[^/\\]+\.json$/i
-            .test(engrainCompaction);
-
-    if(isValidCompactionFileName) {
-        if (engrainCompactionTimeout) {
-            clearTimeout(engrainCompactionTimeout);
-        }
-
-        await new Promise<void>(resolve => {
-            engrainCompactionTimeout = setTimeout(resolve, 2000);
-        });
-
-        if (config.get("engrainCompaction") === engrainCompaction) {
-            await convertCompactionToMemorySeed();
-            engrainCompactionTimeout = undefined;
-        }
-    }
-
-    async function convertCompactionToMemorySeed():Promise<void>{
-        if(alreadyTriggered === false) {
-            alreadyTriggered = true;
-
-            // Extract user text to compaction seed and intended memory seed
-            const extractedInputs = extractCompactionMemorySeeds(engrainCompaction);
-
-            if (extractedInputs !== null) {
-
-                // Check if it is already engrained on any date
-                // True = already engrained, False = not engrained, Null = error reading/parsing
-                const engrained = await validateIfAlreadyEngrained(extractedInputs.compactionSeed);
-
-                if (engrained || engrained === null) {
-                    alreadyTriggered = false;
-                    return;
-                }
-
-                const isValidCompactionSeed = await compactionSeedExists(extractedInputs.compactionSeed);
-
-                if(isValidCompactionSeed) {
-                    // Add the memory seed to available memories pool
-                    const doesEnCompactionAlreadyExist = await enCompactionSeedExists(extractedInputs);
-
-                    if (!doesEnCompactionAlreadyExist) {
-                        await compactionToMemorySeedTransfer(extractedInputs);
-                    }
-
-                    if (doesEnCompactionAlreadyExist) {
-                        await patchCompactedMemorySeed(extractedInputs);
-                    }
-
-                    setConfigSchematics({engrainCompaction: ""});
-                }
+    if (!engrainCompactionPoller) {
+        engrainCompactionPoller = setInterval(() => {
+            if (engrainCompactionChanged) {
+                // A change occurred during the last 2 seconds.
+                engrainCompactionChanged = false;
+                return;
             }
 
-            alreadyTriggered = false;
-        };
+            // No changes during the last 2 seconds.
+            clearInterval(engrainCompactionPoller);
+            engrainCompactionPoller = undefined;
+
+            const stableValue = latestEngrainCompaction;
+
+            if (stableValue === "") return;
+
+            if (stableValue === lastProcessedEngrainCompaction) {
+                // console.log("[VALIDATION SKIPPED] Value already processed");
+                return;
+            }
+
+            // Remember this value so a subsequent invocation doesn't process it again.
+            lastProcessedEngrainCompaction = stableValue;
+            // console.log("[VALIDATION PASSED]", stableValue);
+
+            // Value is stable so begin conversion.
+            void convertCompactionToMemorySeed(stableValue);
+
+        }, 2000);
     }
 
     //------------------------------------------------------------------------
@@ -463,4 +440,44 @@ export async function toolsProvider(
     };
 
     return tools;
+}
+
+async function convertCompactionToMemorySeed(
+    engrainCompaction: string,
+):Promise<void>{
+    if(alreadyTriggered === false) {
+        alreadyTriggered = true;
+
+        // Extract user text to compaction seed and intended memory seed
+        const extractedInputs = extractCompactionMemorySeeds(engrainCompaction);
+
+        if (extractedInputs !== null) {
+
+            // Check if it is already engrained on any date
+            // True = already engrained, False = not engrained, Null = error reading/parsing
+            const engrained = await validateIfAlreadyEngrained(extractedInputs.compactionSeed);
+
+            if (engrained || engrained === null) {
+                alreadyTriggered = false;
+                return;
+            }
+
+            const isValidCompactionSeed = await compactionSeedExists(extractedInputs.compactionSeed);
+
+            if(isValidCompactionSeed) {
+                // Add the memory seed to available memories pool
+                const doesEnCompactionAlreadyExist = await enCompactionSeedExists(extractedInputs);
+
+                if (!doesEnCompactionAlreadyExist) {
+                    await compactionToMemorySeedTransfer(extractedInputs);
+                }
+
+                if (doesEnCompactionAlreadyExist) {
+                    await patchCompactedMemorySeed(extractedInputs);
+                }
+            }
+        }
+
+        alreadyTriggered = false;
+    };
 }
