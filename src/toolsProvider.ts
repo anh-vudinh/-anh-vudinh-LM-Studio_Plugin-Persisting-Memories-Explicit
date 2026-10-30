@@ -29,6 +29,7 @@ import {
 let latestEngrainCompaction = "";
 let lastProcessedEngrainCompaction = "";
 let alreadyTriggered = false;
+let deletionInProgress = false;
 let engrainCompactionChanged = false;
 let engrainCompactionPoller: ReturnType<typeof setInterval> | undefined;
 
@@ -89,7 +90,8 @@ export async function toolsProvider(
 
     if (
         wildcardMatch &&
-        normalizedMemoryFileToDelete !== ""
+        normalizedMemoryFileToDelete !== "" &&
+        !deletionInProgress
     ) {
         // Handle wildcard deletion
         const category = wildcardMatch[1];
@@ -104,21 +106,24 @@ export async function toolsProvider(
         
         // Category does not exist in the memory pool → do nothing
         if (memorySeedsToDelete.length !== 0) {
+            deletionInProgress = true;
             for (const memorySeed of memorySeedsToDelete) {
                 await deleteMemorySeedFile(memorySeed);
-                
-                console.log("deleted ", memorySeed);
+                console.log("🗑️ Deleted ", memorySeed);
             }
+            deletionInProgress = false;
         }
 
     } else if (
         // Normal file deletion
         normalizedMemoryFileToDelete !== "" &&
-        getMemorySeedsPool().includes(normalizedMemoryFileToDelete)
+        getMemorySeedsPool().includes(normalizedMemoryFileToDelete) &&
+        !deletionInProgress
     ) {
+        deletionInProgress = true;
         await deleteMemorySeedFile(normalizedMemoryFileToDelete);
-
-        console.log("deleted ", normalizedMemoryFileToDelete);
+        console.log("🗑️ Deleted ", normalizedMemoryFileToDelete);
+        deletionInProgress = false;
     }
 
     //------------------------------------------------------------------------

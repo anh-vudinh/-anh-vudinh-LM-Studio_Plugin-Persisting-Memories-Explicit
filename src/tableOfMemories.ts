@@ -471,6 +471,8 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
             { withFileTypes: true },
         );
 
+        const existingMemoryFiles: string[] = [];
+
         for (const category of categories) {
             if (!category.isDirectory()) {
                 continue;
@@ -528,6 +530,8 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                         categoryPath,
                         file.name,
                     );
+
+                    existingMemoryFiles.push(fileName);
 
                     try {
                         const memoryStats = await stat(memoryFilePath);
@@ -613,6 +617,72 @@ async function initializeTableOfMemoriesFromLegacyPluginVersion(
                 }
             }
         }
+
+        // Clean up abandoned entries in the TOM file
+        // Normal memory seed deletion logic removes these normally, but this is insurance
+        const tomFileNames = [
+            `TOM_${TOM_RANGES.first.start}-${TOM_RANGES.first.end}.json`,
+            `TOM_${TOM_RANGES.second.start}-${TOM_RANGES.second.end}.json`,
+            `TOM_${TOM_RANGES.special.start}-${TOM_RANGES.special.end}.json`,
+        ];
+
+        for (const tomFileName of tomFileNames) {
+            const tomFilePath = path.join(
+                memoriesDirectory,
+                tomFileName,
+            );
+
+            const lockFile = `${tomFilePath}.lock`;
+
+            let lockOwnerName: string | undefined;
+
+            lockOwnerName = await acquireLock(lockFile, functionName);
+
+            try {
+                let tableOfMemories: TableOfMemoriesEntity[] = [];
+
+                try {
+                    const tomContent = await readFile(
+                        tomFilePath,
+                        "utf-8",
+                    );
+
+                    tableOfMemories = JSON.parse(tomContent);
+                } catch (error) {
+                    const fsError = error as NodeJS.ErrnoException;
+
+                    if (fsError.code !== "ENOENT") {
+                        console.error(
+                            `[⚙️ Initialize Table of Memories] `,
+                            `${error}`
+                        )
+                    }
+                }
+
+                const filteredTableOfMemories = tableOfMemories.filter(
+                    (entry) => existingMemoryFiles.includes(entry.fileName),
+                );
+
+                if (filteredTableOfMemories.length !== tableOfMemories.length) {
+                    await writeFile(
+                        tomFilePath,
+                        JSON.stringify(filteredTableOfMemories, null, 4),
+                        "utf-8",
+                    );
+
+                    console.log(
+                        `[⚙️ Initialize Table of Memories] Removed stale entries from ${tomFileName}.`,
+                    );
+                }
+
+            } finally {
+                if (lockOwnerName !== undefined) {
+                    await releaseLock(lockFile, lockOwnerName);
+                    lockOwnerName = undefined;
+                }
+            }
+        }
+
         console.warn(
             `[⚙️ Initialize Table of Memories] TABLES HAVE BEEN INITIALIZED/REFRESHED REMEMBER TO TURN THIS FEATURE OFF.`,
         );

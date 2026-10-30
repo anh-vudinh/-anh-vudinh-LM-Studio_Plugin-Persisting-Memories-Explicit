@@ -1,5 +1,5 @@
 import { updateTableOfCompactionsIncrementally, updateTocCollectionsIncrementally } from "./tableOfCompactions";
-import { getMemorySeedsPool } from "./memorySession";
+import { addMemorySeedToPool, getMemorySeedsPool } from "./memorySession";
 import { resetPendingSaveMemory, setConfigSchematics } from "./config";
 import { updateTableOfMemoriesIncrementally } from "./tableOfMemories";
 import fs from "node:fs/promises";
@@ -187,6 +187,7 @@ export class MemoryStore {
                         memorySeedName,
                     ],
                 });
+                addMemorySeedToPool(memorySeedName);
             }
             resetPendingSaveMemory();
             return true;
@@ -321,8 +322,7 @@ export class MemoryStore {
                 return true;
             }
 
-            const memorySeedName =
-                `${safeCategory}/${safeName}.json`;
+            const memorySeedName = `${safeCategory}/${safeName}.json`;
 
             // updating the TOM
             await updateTableOfMemoriesIncrementally(
@@ -341,8 +341,10 @@ export class MemoryStore {
                         memorySeedName,
                     ],
                 });
+                addMemorySeedToPool(memorySeedName);
             }
-            
+            // Note: don't resetPendingSaveMemory(); here because this function is shared by both compaction seed and memory seed.
+            // compaction does not need to reset. the memory seed caller resets it in it's own finally block.
             return true;
         } catch {
             return false;

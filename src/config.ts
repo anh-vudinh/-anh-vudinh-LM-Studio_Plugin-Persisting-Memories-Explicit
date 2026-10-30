@@ -87,7 +87,7 @@ export function createConfig(
             {
                 displayName: "🧠 Memories to Inject",
                 subtitle: "Injects a memory into context. Copy/paste from available memories.",
-                hint: "Only the memories listed will persist through turns. \n\n Optional: \n - <category>/*.json will inject the entire category",
+                hint: "Only the memories listed will persist through each turn. \n\n Optional: \n - <category>/*.json will inject the entire category",
                 allowEmptyStrings: false,
             },
             [...memorySeedsSelected]
@@ -98,7 +98,7 @@ export function createConfig(
             {
                 displayName: "📝 Summarize Memory Injected",
                 subtitle: " Forces a summary of the memory file to be injected rather than the raw user/assistant exchange",
-                hint: "This will lessen the context window consumed but may lose details or merge content compared to the full message exchange.",
+                hint: "This will lessen the context window consumed but may lose details compared to the full message exchange.",
             },
             false,
         )
@@ -119,7 +119,7 @@ export function createConfig(
             {
                 displayName: "⚙️ Initialize Table of Memories",
                 subtitle: " *WARNING* Do not leave enabled. Hover for details.",
-                hint: "This is to create the table of memories files for this plugin. Turn it on and send any user message. Turn it off after the message is sent. \n\n Leave it off by default unless your scenerio matches one condition: \n 1) You have never initialized the memory tables before. \n 2) You suspect that your TOM files/contents need repair. \n\n Leave this OFF once the table has been initialized It is expensive to run if you have many memories.",
+                hint: "This is to create the table of memories files for this plugin. Turn it on and send any user message. Turn it off after the message is sent. \n\n Leave it off by default unless your scenerio matches one condition: \n 1) You have never initialized the memory tables before. \n 2) You suspect that your TOM files/contents need repair/cleanup. \n\n Leave this OFF once the table has been initialized It is expensive to run if you have many memories.",
             },
             false,
         )
@@ -128,10 +128,10 @@ export function createConfig(
             "numeric",
             {
                 displayName: "↩️ Retract TOM & TOC older than <N> turns",
-                hint: "Retroactively frees up your context window from being burdended by TOM & TOC tables that you've already consumed. Excludes the latest assistant turn. \n\n - Off = 0 \n\n - Max = 10 ",
+                hint: "Retroactively frees up your context window from being burdended by TOM & TOC tables that you've already consumed. Excludes the latest assistant turn. \n\n - Off = 0 \n\n - Max = 30 ",
                 int: true,
                 min: 0,
-                max: 10,
+                max: 30,
             },
             0
         )
@@ -141,10 +141,10 @@ export function createConfig(
             {
                 displayName: "🔥 Delete Compactions older than <N> days",
                 subtitle: "XPlugin Feature: Hover for details.",
-                hint: "REQUIRES the companion plugin Context Cleanup rev8+ from LM Studio or v4.0+ from Github. \n\n  All compactions older than the stated days will be deleted. \n\n This uses the TOC_Collections files to determine which compacitons to expire. This is for those who wish to not have to manually prune compactions. \n\n - Off = 0 \n\n - Max = 15 \n\n If a Compaction's contents are important to you, make it permanent using 🌱 Compaction ➠ Memory Seed.",
+                hint: "REQUIRES the companion plugin Context Cleanup rev8+ from LM Studio or v4.0+ from Github. \n\n  All compactions older than the stated days will be deleted. \n\n This uses the TOC_Collections files to determine which compacitons to expire. This is for those who wish to not have to manually prune compactions. \n\n - Off = 0 \n\n - Max = 30 \n\n If a Compaction's contents are important to you, make it permanent using 🌱 Compaction ➠ Memory Seed.",
                 int: true,
                 min: 0,
-                max: 15,
+                max: 30,
             },
             0
         )

@@ -11,34 +11,22 @@ The Persisting Memories Explicit plugin (Hybrid) is an LM Studio plugin that let
 - Tested working on Windows 11 Pro 25H2 | LM Studio 0.4.27
 (Pathing is relative and nothing should be hardcoded specifically for Windows; this should work with Linux and macOS too.)
 
+**Sorry about the tiny bug fixes or changes after the big update. I guess my brain was fried and now that it's decompressing these things popped up.**
+
 ## Bugfix (10/29/2026)
 - My choice of correction on 10/27/2026 for the compaction seed conversion field checker implementation was flawed. I had forgotten that "await timeouts" do not play well with LM Studio's processing flow. Users who did not clear out the conversion field after they used it or did not break the full command apart would experience a 2-second delay after each new user message sent which was the await timeout holding things up. I've properly disconnected the conversion process now from the normal flow.
-   <details>
-   <summary>Click to expand image of TOC_ Collections</summary>
-   <img src="screenshots\TOC_Collections.jpg" alt="Image of TOC_Collections">
-   </details>
-   <br>
 
+- New memory seeds created should immediately be added to the available memory seed pool in the backend. I must have introduced this bug a while back when I was refactoring to clean up my code, maybe I thought it was an unnecessary duplication and forgot why I was pushing the new seed to two different arrays so I got rid of one. I'm not sure but it's back and fixed. (plugin UI will still not show it until reinitialization).
 
-## Updated (10/26/2026)
+## Updated (10/30/2026)
 
 - Entire Readme has been updated to match the plugin's current state, so I highly encourage users to read it starting at [Configuration](#configuration). The functionality you knew of before remains the same, but there are many new additions. If you're interested in the technical bits, it can be read in the [Technical Details](#technical-details). The Technical Details will not alter how you engage with this plugin, but some users may find it nice to know what changes occurred under the hood to make this plugin reach its current state. The tooltips of the plugin have also been updated. Hover them for more information or if you forgot the commands associated with that feature.
 
-- I'll keep it short. The biggest change is that I've switched the final write action to a polling -> polling -> write method instead of the previous polling -> timeout -> write method. Sounds simple but it was a real pain to work out all the issues that came from transitioning over. This required me to make some big changes to the MEC to accommodate for the difference in timings and logic flow. The biggest benefit is now you can spam messages to the assistant, and any operation that you did not let the plugin resolve by waiting for the 2-seconds will be queued and resolved when you give it the opportunity. With the previous method, if you did not allow the 2-second grace period, the write actions for that turn were considered lost.
-   <details>
-   <summary>Click to expand image of memory recall</summary>
-   <img src="screenshots\retroactive-update.gif" alt="Image of new polling method effects">
-   </details>
-   <br>
+- ⚙️ Initialize Table of Memories now has logic to remove stale/abandoned memory TOM entries. The normal delete memory logic should handle removing these, but this extra layer of insurance will account for when the user manually deletes the memory folders/files through the file explorer.
 
-- The [Model Dependent Version](https://lmstudio.ai/anhuvdinh/persisting-memories) has been deprecated and fused into the Explicit version. But don't worry if you liked the Explicit version you can continue using it. If you liked the Model Dependent version you can continue using it too through the "Tool Call Mode?" toggle. Now in the Explicit version there is a toggle to choose which mode you wish to use. As always the Explicit mode (tool call mode off) will give you reliable results and actions, every functionality is scripted; same input = same output. Tool Call Mode gives the assistant freedom to call tools as it wishes and display the results as it wishes. Although I have prompted it to try and return the results as given, which matches the output of my Explicit functions, assistants may present the results in their own self-determined way.
-   <details>
-   <summary>Click to expand image of tool call toggle</summary>
-   <img src="screenshots\tool-call-mode.jpg" alt="Image of tool call toggle">
-   </details>
-   <br>
+- Added a repetition blocker to the 🗑️ Delete Memory field. Sometimes the deletion command could be sent twice. The first time deleted the memory and the second time would just try but then exit when it saw the memory didnt exist anymore. I didn't mind it before, but I might as well add it.
 
-- QOL change: Made the `~/.lmstudio` folder location semi-dynamic. If your `.lmstudio` folder is in the default location, the plugin will have no problems pathing to the right folders. If you've moved your `.lmstudio` folder out of the default location of the User folder, this plugin will now locate the relative position of your `.lmstudio` root folder based on the root folder of where this plugin lives.
+- Expanded ↩️ and 🔥 features configuration max to 30.
 
 ## Final Thoughts
 
@@ -96,8 +84,8 @@ From GitHub Source Code: Open PowerShell/terminal, navigate to the root folder o
 | 📝 Summarize Memory Injected | Boolean · `ON / OFF` | Instead of injecting the memory file contents verbatim, have the model summarize their contents before injection. This will only affect memories injected while this option is toggled ON. |
 | 📦 Table of Memories | `NONE` | A simple reference to the TOM names in case you forget them. |
 | ⚙️ Initialize Table of Memories | Boolean · `ON / OFF` | Users are expected to toggle this ON and send a user message one time. This will create and build your TOM tables in the memories folder. After the TOMs are initialized keep the option toggled OFF unless you need to reinitialize the tables. |
-| ↩️ Retract TOM & TOC older than `<N>` turns | Numeric · `0 = OFF, max 10`  | Replaces all TOM tables with 'Content Retracted' if they are not the `<N>`th newest assistant messages. This is to manage your context window. TOMs are supposed to just be a quick reference to locate your memories. You are expected to use the Memories to Inject feature to keep memories in context. |
-| 🔥 Delete Compactions older than <N> days | Numeric · `0 = OFF, max 15` | Requires Context Cleanup Plugin: Will automatically delete compactions that are older than the days you set. This will also delete everything associated with that compaction. It's TOC_Entity, TOC_Summaries, TOC_Seeds, and TOC_Collections entry will all be cleared. |
+| ↩️ Retract TOM & TOC older than `<N>` turns | Numeric · `0 = OFF, max 30`  | Replaces all TOM and TOC tables with 'Content Retracted' if they are not the `<N>`th newest assistant messages. This is to manage your context window. TOMs are supposed to just be a quick reference to locate your memories. You are expected to use the Memories to Inject feature to keep memories in context. |
+| 🔥 Delete Compactions older than `<N>` days | Numeric · `0 = OFF, max 30` | Requires Context Cleanup Plugin: Will automatically delete compactions that are older than the days you set. This will also delete everything associated with that compaction. It's TOC_Entity, TOC_Summaries, TOC_Seeds, and TOC_Collections entry will all be cleared. |
 | 🌱 Compaction ➠ Memory Seed | `String` | Requires Context Cleanup Plugin: This is where you can engrain a compaction into a memory seed. Type in the full name of the compaction seed you wish to turn into a memory seed. Follow the expected format. |
 
 ## Features
@@ -158,7 +146,9 @@ Do not take this Pros and Cons list as something to influence your decision of w
 
 When the user sees a message they wish to keep as a memory, they can call on the `save_memory` tool by saying this to the assistant:
 
-1. Single memory save. User says: `save memory #; category <category_name>; name <memory_name>`. (Refer to REGEX for allowed verbiage)
+1. Single memory save:
+
+   User says: `save memory #; category <category_name>; name <memory_name>`. (Refer to REGEX for allowed verbiage)
    - Usable delimiters are `;` or `,` or `.`
    - Prefixes like `category` and/or `name` are required.
    <details>
@@ -167,7 +157,9 @@ When the user sees a message they wish to keep as a memory, they can call on the
    </details>
    <br>
 
-2. Batch memory save. User says: `save memory <message #> to <message #>; category <category>; name <name>`. (Refer to REGEX for allowed verbiage)
+2. Batch memory save:
+
+   User says: `save memory <message #> to <message #>; category <category>; name <name>`. (Refer to REGEX for allowed verbiage)
    User messages that are just save memory commands will be filtered out and not saved to the file during the batch process.
    <details>
    <summary>Click to expand Picture of batch memory save.</summary>
@@ -175,7 +167,7 @@ When the user sees a message they wish to keep as a memory, they can call on the
    </details>
    <br>
 
-3. SAVE MEMORY REGEX. Each line is a phrase pattern. Only the keywords highlighted in green are required. Keywords are split into sets, each of those sets have variations of the words allowed to accommodate for misspellings. You can alternatively use these misspellings to shorthand commands. You only need to use one word of the set. Examples `svmem4`is equivalent of the full command `save memory 4`. If you don't like shorthand and prefer plain English you can say `the category is <category_name>` that is equivalent to `category <category_name>`. To exit the save memory mode `exit save memory`, you must spell EXIT correctly, there is no optional variation.
+3. SAVE MEMORY REGEX. Each line is a phrase pattern. Only the keywords highlighted in green are required. Keywords are split into sets, each of those sets have variations of the words allowed to accommodate for misspellings. You can alternatively use these misspellings to shorthand commands. You only need to use one word of the set. For the Explicit mode `svmem4`is equivalent of the full command `save memory 4`. If you don't like shorthand and prefer plain English you can say `the category is <category_name>` that is equivalent to `category <category_name>`. To exit the save memory mode `exit save memory`, you must spell EXIT correctly, there is no optional variation. In Tool Call Mode the Model will interpret your save command so some shorthands might confuse the model. If you say `svmem4` it may understand you're asking for teh save command but might not understand that you specified message 4. It's good to double check what parameters it used in the tool call.
    <details>
    <summary>Click to expand Picture of Save Memory command verbiage</summary>
    <img src="screenshots\save-memory-command-variations.jpg" alt="Image of save command variations">
@@ -301,6 +293,11 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 8. **Convert a Compaction Seed into a Memory Seed:** The way to do this is by using the 🌱 Compaction ➠ Memory Seed text field. Type in `<name_of_compaction_c#_p#.json> >> <category_name>/<file_name>.json` The double **>>** is a requirement. It will be accessible as an available memory although your plugin UI might not immediately show it. That's an LM Studio problem. If you want all of a compaction seed's parts assigned to the same memory, change the # following the `_p#` while leaving the memory seed name the same. I caution you against this though because if you compacted at 50% threshold and got 3 parts, that single memory seed will consume 50% of your context window the next time you load that single memory seed that you packed with all 3 parts. Output of the transfer is in the console logs.
    - There is one caveat to this conversion. Once you have converted a compaction seed to a memory seed once, the compaction seed is ineligible to be saved to another memory seed. This was a method I chose to prevent accidental conversions being made on the same file as users edited the 🌱 Compaction ➠ Memory Seed text field. To make your compaction seed eligible again, go to the `~/.lmstudio/memories/compactions/TOC_Collections.json` and remove that specific compaction seed's name from any `engrained_fileName:[]` it is a part of; there can only be one instance of the compaction seed name, so no need to look for a duplicate once you have found it.
+      <details>
+      <summary>Click to expand image of TOC_ Collections</summary>
+      <img src="screenshots\TOC_Collections.jpg" alt="Image of TOC_Collections">
+      </details>
+      <br>
 
 9. **Injecting a Summarized Version of the Former Compaction Seed:** If you chose the route of merging multiple compaction parts into one memory seed you can consider using the 📝 Summarize Memory Injected feature to try and condense that memory seed while you inject it. It should reduce it down to be bearable compared to injecting the raw converted compaction seed.
 
@@ -381,10 +378,12 @@ Removing and deleting are two distinct actions. **Remove** means your intention 
 
 - **Bugfix?** There was an issue where I could force an edge case scenario where if I spammed the assistant, overloaded it, stalled it, or did very out of the ordinary/unrealistic user behaviors I could get the plugin to fail to register the conversation file name or have read and parse errors. However after adding my additional read/parse recovery methods and silent failure on acquiring the CFN during the scan, and giving it one more attempt to acquire it at the beginning of the MEC process, I have not been able to encounter those errors again. So I don't know if I really fixed it or not. All I know is it hasn't happened at all during my testing and use over the past days. One factor of the failure comes from empty.conversation.json, this empty.conversation.json is created when you use the chat session that is auto created after loading a model. With properly created files UNIX_timestamped.conversation.json, I don't think I ever saw that problem.
 
+- **LM Studio Root Directory Relative Location:** Made the `~/.lmstudio` folder location semi-dynamic. If your `.lmstudio` folder is in the default location, the plugin will have no problems pathing to the right folders. If you've moved your `.lmstudio` folder out of the default location of the User folder, this plugin will now locate the relative position of your `.lmstudio` root folder based on the root folder of where this plugin lives.
+
 > OLD SECTION
 - **Multi-Edit Coordinator:** The function that consolidates all the write functions so they can be executed at a single place and at a single time.
 
-- **Read File for Context Cleanup Plugin:** This plugin will create a `<file_name>-persisting-memories-final-write.ready` file to give the green light to the Context Cleanup plugin that it's operations are done. CC will then proceed with it's operations.
+- **Ready File for Context Cleanup Plugin:** This plugin will create a `<file_name>-persisting-memories-final-write.ready` file to give the green light to the Context Cleanup plugin that it's operations are done. CC will then proceed with it's operations.
 
 - **Lock File:** This plugin will create a `<file_name>.lock` file to protect the conversation file while it's being updated. Currently in this system as it has evolved it may be just a safeguard not currently doing much other than protecting `ChatSessionConversationRelationship` which is low priority. The Contect Cleanup plugin is already now regulated to waiting to consuming the ready file, and the write functions have all been consolidated to the MEC who is now directing things through a write queue FIFO and last person is responsible for the final write structure.
 
